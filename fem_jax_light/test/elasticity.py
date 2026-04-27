@@ -134,10 +134,10 @@ nodes_sets.append(nodes_z0)
 #constraints dof for each node set
 l_dof = [[0,1,2,3,4,5],[0,4,5],[2,3,4]]
 fem.nodes_sets = nodes_sets
-fem.l_dof = [l_dof]
+fem.l_dof = l_dof
 # Apply boundary conditions
 fem.boundary_conditions(fem.nodes_sets,fem.l_dof)
 # solve 
 Us = fem.solve()
 # Post-processing
-fem.post_processing(Us,"test.msh")
+fem.post_processing(Us,"test")
