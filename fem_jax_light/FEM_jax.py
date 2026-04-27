@@ -19,15 +19,13 @@ class FEM_study():
     Inputs:
     mesh_file: fichier de maillage .msh
     element_type: dict avec clés type d'élément et formulation associée
-                  ex: element_type['beam']="Euler"
     element_property: dict des propriétés géométriques
     material: dict des propriétés matériaux
     mode: 'full' ou 'sparse' pour la matrice de rigidité
     
     Types d'éléments disponibles:
-    element_type['beam'] = "Euler" ou "Timoshenko"
-    element_type['tri'] = "DKT" ou "DKT_jax"
-    element_type['quad'] = "Q4gamma" ou "DKQ"
+    element_type['tri'] = "DKT_jax"
+
     """
     def __init__(self, mesh_file: str, element_type: Dict, element_property: Dict, 
                  material: Dict, mode: str = 'full'):
@@ -149,17 +147,17 @@ class FEM_study():
         beam_elements_ind = elements_tot[:, 1] == 1
         beam_elements = elements_tot[beam_elements_ind, :]
         n_beam = beam_elements.shape[0]
-        print(f"Nombre d'éléments poutre = {n_beam}")
+        print(f"Number of beam elements = {n_beam}")
         
         tri_elements_ind = elements_tot[:, 1] == 2
         tri_elements = elements_tot[tri_elements_ind, :]
         n_tri = tri_elements.shape[0]
-        print(f"Nombre d'éléments triangulaires = {n_tri}")
+        print(f"Number of triangular elements = {n_tri}")
         
         quad_elements_ind = elements_tot[:, 1] == 3
         quad_elements = elements_tot[quad_elements_ind, :]
         n_quad = quad_elements.shape[0]
-        print(f"Nombre d'éléments quadrilatéraux = {n_quad}")
+        print(f"Number of quadrilateral elements = {n_quad}")
         
         # Construction du dictionnaire d'éléments
         element_dict = {'nodes': nodes, 'elements': {}}
@@ -205,7 +203,7 @@ class FEM_study():
                 self.fake_nodes.append(node[0])
         
         if len(self.fake_nodes) > 0:
-            print(f"Attention: {len(self.fake_nodes)} nœuds non utilisés détectés")
+            print(f"Warning: {len(self.fake_nodes)} nodes not used detected")
         
         self.elements_tot = elements_tot
         self.element_dict = element_dict
