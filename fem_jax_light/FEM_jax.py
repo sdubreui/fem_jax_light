@@ -4,6 +4,8 @@ import jax.numpy as jnp
 from jax import jit, vmap, grad, jacfwd, jacrev
 import jax.scipy.linalg as jlinalg
 import jax.scipy.sparse.linalg as jspalinalg
+from jax.scipy.sparse.linalg import cg
+from jax.experimental import sparse
 from typing import Dict, List, Tuple, Any, Callable
 from fem_jax_light.dkt_element_jax import DKT_element
 import time as t
@@ -255,15 +257,14 @@ class FEM_study():
         Args:
         nodes_index: (n_nodes,) array with node identifiers (static_argnums=0 for JIT)
         nodes_coord: (n_nodes, 3) array with [x, y, z] for each node
-        element_properties: dict of geometric properties
-        materials: dict of material properties
+        element_properties: list of geometric properties
+        materials: list of material properties
         
         Returns:
         K: stiffness matrix (JAX array)
         """
         nodes_index = np.array(nodes_index,dtype=int)
-        
-        K = jnp.zeros((nodes_index.shape[0]*6, nodes_index.shape[0]*6))
+    
         # Vectorized version
         
         # we loop over reference elements (not mesh elements), we limit to tri element so single loop over element sets
@@ -276,6 +277,10 @@ class FEM_study():
                 nodes_index,
                 'tri'
             )
+        
+        #initialization of K
+        K = jnp.zeros((nodes_index.shape[0]*6, nodes_index.shape[0]*6))
+                                                                                                                 
         for i in self.element_dict['element_sets'].keys():
             name = self.element_dict['element_sets'][i]['name']
             # mask creation
@@ -292,10 +297,61 @@ class FEM_study():
             # Ultra-fast assembly
             K = self.assembler.assemble(K_elem) + K
         self.K = K
-        
+                                                                     
         return K
 
 
+    def assembling_K_parametric_sparse(self,nodes_index,nodes_coord,element_properties: list, materials: list):
+        """
+        Assemble the global stiffness matrix in sparse formatbased on variable parameters
+        Functional version for differentiation
+        
+        Args:
+        nodes_index: (n_nodes,) array with node identifiers (static_argnums=0 for JIT)
+        nodes_coord: (n_nodes, 3) array with [x, y, z] for each node
+        element_properties: list of geometric properties
+        materials: list of material properties
+        
+        Returns:
+        K: stiffness matrix (JAX array)
+        """
+        nodes_index = np.array(nodes_index,dtype=int)
+    
+        # Vectorized version
+        
+        # we loop over reference elements (not mesh elements), we limit to tri element so single loop over element sets
+        # in fact we loop over element sets
+        # to avoid dynamic shape we create a single set and mask results (elementary matrix calculation unnecessary but avoids recompilation)
+        elements_sets = self.elements_tot[:, [0,3,4,5]]
+        all_coords = self.prepare_all_tri_element_coords(nodes_index,nodes_coord, elements_sets)
+        self.assembler = FastAssembler(
+                elements_sets,
+                nodes_index,
+                'tri'
+            )
+        
+        #initialization of K
+        K = jnp.zeros(self.assembler.flat_indices.shape[0])
+                                                                
+        
+        for i in self.element_dict['element_sets'].keys():
+            name = self.element_dict['element_sets'][i]['name']
+            # mask creation
+            mask = (self.elements_tot[:, 2] == i)
+            compute_K_ref = self.DKT.compute_K_elem
+            def compute_K_single_masked(coords, m, materials, properties):
+                K = compute_K_ref(coords,materials,properties)
+                return jnp.where(m, K, 0.0)
+            materials_set = jnp.atleast_2d(materials[i-1]).repeat(mask.shape[0],axis=0)
+            property_set = jnp.atleast_2d(element_properties[i-1]).repeat(mask.shape[0],axis=0)
+            K_elem = vmap(compute_K_single_masked)(all_coords,mask,materials_set,property_set)
+
+           
+            # Ultra-fast assembly
+            K = self.assembler.assemble_coo(K_elem)[1] + K
+        K = sparse.BCOO((K,self.assembler.flat_indices),shape=(nodes_index.shape[0]*6, nodes_index.shape[0]*6))
+        self.K = K
+        return self.K
 
 
 
@@ -364,13 +420,14 @@ class FEM_study():
                                     
                 elif self.mode == 'sparse':                    
                     for dof in l_dof[i]:
-                        ind_row = self.row == 6*ind_node + dof
-                        self.data = self.data.at[ind_row].set(0.0)
-                        ind_col = self.col == 6*ind_node + dof
-                        self.data = self.data[ind_col].set(0.0)
-                        ind_diag = ind_col & ind_row
-                        self.data = self.data.at[ind_diag].set(1.0)
-                        self.rhs = self.rhs.at[6*ind_node + dof].set(0.0)
+                        for j in dof:
+                            ind_row = self.K.indices[:, 0] == 6*ind_node + j
+                            self.K.data = self.K.data.at[ind_row].set(0.0)
+                            ind_col = self.K.indices[:, 1] == 6*ind_node + j
+                            self.K.data = self.K.data.at[ind_col].set(0.0)
+                            ind_diag = ind_col & ind_row
+                            self.K.data = self.K.data.at[ind_diag].set(1.0/ind_diag.sum())
+                            self.rhs = self.rhs.at[6*ind_node + j].set(0.0)
                     
     
     def set_rhs(self, rhs: np.ndarray) -> None:
@@ -394,6 +451,18 @@ class FEM_study():
         """
         # Solving with JAX
         U = jlinalg.solve(self.K, self.rhs)
+        return U
+    
+    def solve_sparse(self) -> jnp.ndarray:
+        """
+        Solve the system KU = F using sparse solver
+        
+        Returns:
+        U: displacement vector (JAX array)
+        """
+        def mv(x):
+            return self.K @ x
+        U, info = cg(mv, self.rhs,tol=1e-6)
         return U
     
     def compute_strain_and_stress(self,nodes_index, U: jnp.ndarray,nodes_coord,element_properties: list, materials: list) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
@@ -572,7 +641,7 @@ class FastAssembler:
         
         return K_global
     
-    def assemble_coo(self, K_elements: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    def assemble_coo(self, K_elements: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """
         Assemble in COO format (for sparse solvers)
         
@@ -580,7 +649,7 @@ class FastAssembler:
         row, col, data: triplets COO
         """
         values = K_elements.flatten()
-        return self.flat_indices[:, 0], self.flat_indices[:, 1], values
+        return self.flat_indices, values
 
 
 

@@ -46,6 +46,51 @@ print(f"Maximum deflection at the center = {U_max:.6e} m")
 print(f"Reference solution for maximum deflection = {w:.6e} m")
 print(f"Relative error = {epsilon:.2%}")
 
+# sparse solver 
+test_case = "circular_plate"
+mesh_file = "meshes/"+test_case+".msh"
+# Material and element properties
+E = 6825.0*1e7
+nu = 0.3
+h = 0.04
+element_type = {'tri': 'DKT_jax'}
+element_property = [[h]]
+material = [[E,nu]] 
+# Create FEM study
+fem_sp = FEM_study(mesh_file,element_type,element_property,material,mode = 'sparse')
+# Right hand side
+nodes = fem_sp.nodes
+ind = np.sqrt(nodes[:,1]**2+nodes[:,2]**2+nodes[:,3]**2).argmin()
+nodes_x1 = nodes[ind,0]
+F = jnp.zeros((len(nodes)*6,))
+F = F.at[int(6*(nodes_x1-1)+2)].set(1000.0)
+fem_sp.set_rhs(F)
+# Assembling the rigidity matrix
+K_sp = fem_sp.assembling_K_parametric_sparse(nodes[:,0],nodes[:,1:], element_property, material)
+# Boundary conditions
+ind = np.sqrt(nodes[:,1]**2+nodes[:,2]**2+nodes[:,3]**2) >= 0.48
+nodes_x0 = nodes[ind,0]
+fem_sp.nodes_sets = [nodes_x0]
+l_dof_clamped = [[0,1,2,3,4,5]]
+fem_sp.l_dof = [l_dof_clamped]
+# Apply boundary conditions
+fem_sp.boundary_conditions(fem_sp.nodes_sets,fem_sp.l_dof)
+# solve 
+Us_sparse = fem_sp.solve_sparse()
+# comparison with reference solution
+a = 0.5
+F1 = 1000.0
+w = 3.0*(1.0-nu**2)*a**2*F1/(4.0*np.pi*E*h**3)
+U_max = Us_sparse[2:-1:6].max()
+epsilon = abs((w-U_max)/w)
+print(f"Test case sparse solver: {test_case}")
+print(f"Maximum deflection at the center = {U_max:.6e} m")
+print(f"Reference solution for maximum deflection = {w:.6e} m")
+print(f"Relative error = {epsilon:.2%}")
+
+
+
+
 #circular plate simply supported and load at the center 
 test_case = "circular_plate"
 mesh_file = "meshes/"+test_case+".msh"
@@ -86,6 +131,49 @@ w = 3.0*(3.0+nu)*(1-nu)*a**2*F1/(4.0*np.pi*E*h**3)
 U_max = Us[2:-1:6].max()
 epsilon = abs((w-U_max)/w)
 print(f"Test case: {test_case}")
+print(f"Maximum deflection at the center = {U_max:.6e} m")
+print(f"Reference solution for maximum deflection = {w:.6e} m")
+print(f"Relative error = {epsilon:.2%}")
+
+
+# sparse solver 
+test_case = "circular_plate"
+mesh_file = "meshes/"+test_case+".msh"
+# Material and element properties
+E = 6825.0*1e7
+nu = 0.3
+h = 0.04
+element_type = {'tri': 'DKT_jax'}
+element_property = [[h]]
+material = [[E,nu]] 
+# Create FEM study
+fem_sp = FEM_study(mesh_file,element_type,element_property,material,mode = 'sparse')
+# Right hand side
+nodes = fem_sp.nodes
+ind = np.sqrt(nodes[:,1]**2+nodes[:,2]**2+nodes[:,3]**2).argmin()
+nodes_x1 = nodes[ind,0]
+F = jnp.zeros((len(nodes)*6,))
+F = F.at[int(6*(nodes_x1-1)+2)].set(1000.0)
+fem_sp.set_rhs(F)
+# Assembling the rigidity matrix
+K_sp = fem_sp.assembling_K_parametric_sparse(nodes[:,0],nodes[:,1:], element_property, material)
+# Boundary conditions
+ind = np.sqrt(nodes[:,1]**2+nodes[:,2]**2+nodes[:,3]**2) >= 0.48
+nodes_x0 = nodes[ind,0]
+fem_sp.nodes_sets = [nodes_x0]
+l_dof_clamped = [[2]]
+fem_sp.l_dof = [l_dof_clamped]
+# Apply boundary conditions
+fem_sp.boundary_conditions(fem_sp.nodes_sets,fem_sp.l_dof)
+# solve 
+Us_sparse = fem_sp.solve_sparse()
+# comparison with reference solution
+a = 0.5
+F1 = 1000.0
+w = 3.0*(3.0+nu)*(1-nu)*a**2*F1/(4.0*np.pi*E*h**3)
+U_max = Us_sparse[2:-1:6].max()
+epsilon = abs((w-U_max)/w)
+print(f"Test case sparse solver: {test_case}")
 print(f"Maximum deflection at the center = {U_max:.6e} m")
 print(f"Reference solution for maximum deflection = {w:.6e} m")
 print(f"Relative error = {epsilon:.2%}")
