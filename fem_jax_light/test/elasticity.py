@@ -74,7 +74,7 @@ fem_sp.nodes_sets = [nodes_x0]
 l_dof_clamped = [[0,1,2,3,4,5]]
 fem_sp.l_dof = [l_dof_clamped]
 # Apply boundary conditions
-fem_sp.boundary_conditions(fem_sp.nodes_sets,fem_sp.l_dof)
+fem_sp.boundary_conditions_sparse(fem_sp.nodes_sets,fem_sp.l_dof)
 # solve 
 Us_sparse = fem_sp.solve_sparse()
 # comparison with reference solution
@@ -164,7 +164,7 @@ fem_sp.nodes_sets = [nodes_x0]
 l_dof_clamped = [[2]]
 fem_sp.l_dof = [l_dof_clamped]
 # Apply boundary conditions
-fem_sp.boundary_conditions(fem_sp.nodes_sets,fem_sp.l_dof)
+fem_sp.boundary_conditions_sparse(fem_sp.nodes_sets,fem_sp.l_dof)
 # solve 
 Us_sparse = fem_sp.solve_sparse()
 # comparison with reference solution

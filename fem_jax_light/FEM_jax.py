@@ -1,6 +1,7 @@
 import numpy as np
 from functools import partial
 import jax.numpy as jnp
+import jax
 from jax import jit, vmap, grad, jacfwd, jacrev
 import jax.scipy.linalg as jlinalg
 import jax.scipy.sparse.linalg as jspalinalg
@@ -23,19 +24,17 @@ class FEM_study():
     element_type: dict with element type keys and associated formulation
     element_property: dict of geometric properties
     material: dict of material properties
-    mode: 'full' or 'sparse' for the stiffness matrix
     
     Available element types:
     element_type['tri'] = "DKT_jax"
 
     """
     def __init__(self, mesh_file: str, element_type: Dict, element_property: Dict, 
-                 material: Dict, mode: str = 'full'):
+                 material: Dict):
         self.mesh_file = mesh_file
         self.element_type = element_type
         self.element_property = element_property
         self.material = material
-        self.mode = mode
         
         
         # Attributes initialized later
@@ -410,26 +409,87 @@ class FEM_study():
         for i, nodes in enumerate(nodes_set):
             for node in nodes:
                 ind_node = np.argwhere(self.nodes[:, 0] == node)[0, 0]
-                
-                if self.mode == 'full':
-                    for dof in l_dof[i]:
-                        self.K = self.K.at[:, 6*ind_node + dof].set(0.0)
-                        self.K = self.K.at[6*ind_node + dof, :].set(0.0)
-                        self.K = self.K.at[6*ind_node + dof, 6*ind_node + dof].set(1.0)
-                        self.rhs = self.rhs.at[6*ind_node + dof].set(0.0)
+                for dof in l_dof[i]:
+                    self.K = self.K.at[:, 6*ind_node + dof].set(0.0)
+                    self.K = self.K.at[6*ind_node + dof, :].set(0.0)
+                    self.K = self.K.at[6*ind_node + dof, 6*ind_node + dof].set(1.0)
+                    self.rhs = self.rhs.at[6*ind_node + dof].set(0.0)
                                     
-                elif self.mode == 'sparse':                    
-                    for dof in l_dof[i]:
-                        for j in dof:
-                            ind_row = self.K.indices[:, 0] == 6*ind_node + j
-                            self.K.data = self.K.data.at[ind_row].set(0.0)
-                            ind_col = self.K.indices[:, 1] == 6*ind_node + j
-                            self.K.data = self.K.data.at[ind_col].set(0.0)
-                            ind_diag = ind_col & ind_row
-                            self.K.data = self.K.data.at[ind_diag].set(1.0/ind_diag.sum())
-                            self.rhs = self.rhs.at[6*ind_node + j].set(0.0)
+
                     
     
+    def boundary_conditions_sparse(self, nodes_set: List[List[int]], l_dof: List[List[int]]):
+        """
+        JAX-compatible Dirichlet BC application for BCOO sparse matrix.
+
+        Args:
+            K: BCOO matrix
+            rhs: dense vector
+            nodes: array of node ids (shape: [n_nodes])
+            nodes_set: list of lists of node ids
+            l_dof: list of lists of dofs per set
+
+        Returns:
+            (K_new, rhs_new)
+        """
+
+        # ---- Step 1: map node ids -> indices (no argwhere!) ----
+        # Build lookup table once (must be static outside jit ideally)
+        node_ids = self.nodes[:, 0]
+
+        def find_index(n):
+            return jnp.argmax(node_ids == n)  # safe if unique
+
+        # Vectorize mapping
+        find_index_vmap = vmap(find_index)
+
+        # ---- Step 2: build constrained dof indices ----
+        constrained_dofs = []
+
+        for i, node_list in enumerate(nodes_set):
+            node_array = jnp.array(node_list)
+            node_idx = find_index_vmap(node_array)
+
+            dofs = jnp.array(l_dof[i])
+
+            # broadcast: (n_nodes, n_dofs)
+            dof_idx = 6 * node_idx[:, None] + dofs[None, :]
+            constrained_dofs.append(dof_idx.reshape(-1))
+
+        constrained_dofs = jnp.concatenate(constrained_dofs)
+
+        # ---- Step 3: apply masking to sparse structure ----
+
+        rows = self.K.indices[:, 0]
+        cols = self.K.indices[:, 1]
+
+        # membership test (vectorized)
+        def isin(x, values):
+            return (x[:, None] == values[None, :]).any(axis=1)
+
+        row_mask = isin(rows, constrained_dofs)
+        col_mask = isin(cols, constrained_dofs)
+
+        # zero rows and columns
+        new_data = jnp.where(row_mask | col_mask, 0.0, self.K.data)
+
+        # ---- Step 4: set diagonal entries to 1 ----
+        diag_mask = row_mask & col_mask & (rows == cols)
+
+        # Count how many entries per diagonal index (avoid division issue)
+        # Here we just set them to 1.0 (simpler and stable)
+        new_data = jnp.where(diag_mask, 1.0, new_data)
+
+        # ---- Step 5: rhs ----
+        rhs = self.rhs.at[constrained_dofs].set(0.0)
+
+        # ---- rebuild sparse matrix ----
+        K_new = sparse.BCOO((new_data, self.K.indices), shape=self.K.shape)
+
+        self.K = K_new
+        self.rhs = rhs
+        return K_new, rhs
+
     def set_rhs(self, rhs: np.ndarray) -> None:
         """
         Set the right-hand side
