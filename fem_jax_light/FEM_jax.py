@@ -17,13 +17,13 @@ class FEM_study():
     Construction:
     
     Inputs:
-    mesh_file: fichier de maillage .msh
-    element_type: dict avec clés type d'élément et formulation associée
-    element_property: dict des propriétés géométriques
-    material: dict des propriétés matériaux
-    mode: 'full' ou 'sparse' pour la matrice de rigidité
+    mesh_file: mesh file .msh
+    element_type: dict with element type keys and associated formulation
+    element_property: dict of geometric properties
+    material: dict of material properties
+    mode: 'full' or 'sparse' for the stiffness matrix
     
-    Types d'éléments disponibles:
+    Available element types:
     element_type['tri'] = "DKT_jax"
 
     """
@@ -36,7 +36,7 @@ class FEM_study():
         self.mode = mode
         
         
-        # Attributs initialisés plus tard
+        # Attributes initialized later
         self.nodes = None
         self.K = None
         self.rhs = None
@@ -47,28 +47,28 @@ class FEM_study():
         self.elem_nodes = []
         self.fake_nodes = []
  
-        # Lecture du maillage (reste en NumPy)
+        # Read mesh file (remains in NumPy)
         element_dict, elements_tot = self.read_mesh_file()
 
-        # creation de l'élément DKT
+        # Creation of DKT element
         self.DKT = DKT_element()
 
 
     def read_mesh_file(self) -> Tuple[Dict, np.ndarray]:
         """
-        Lit le fichier de maillage et retourne les données de maillage
+        Read the mesh file and return mesh data
         
         Outputs:
-        element_dict: dict avec clés "nodes" et "elements"
-        elements_tot: array numpy de tous les éléments
+        element_dict: dict with keys "nodes" and "elements"
+        elements_tot: numpy array of all elements
         
-        Note: Cette fonction reste en NumPy car elle fait de l'I/O
+        Note: This function remains in NumPy because it performs I/O
         """
         import gmsh
         gmsh.initialize()
         gmsh.open(self.mesh_file)
         
-        # Lecture des nœuds
+        # Read nodes
         nodes_tag, nodes_coord, par_coord = gmsh.model.mesh.getNodes() 
         n_nodes = int(len(nodes_tag))
         nodes_coord = nodes_coord.reshape((n_nodes, 3))
@@ -77,7 +77,7 @@ class FEM_study():
         nodes[:, 1:] = nodes_coord
         self.nodes = nodes
         
-        # Lecture des éléments
+        # Read elements
         elemTypes, elemTags, elemNodeTags = gmsh.model.mesh.getElements()
         n_types = len(elemTypes)
         n_elements = int(np.array([len(elemTags[i]) for i in range(n_types)]).sum())
@@ -88,7 +88,7 @@ class FEM_study():
         elem_index = 0
         surfaces_tri = np.zeros((n_elements, 1))
         
-        # Boucle sur les groupes physiques
+        # Loop over physical groups
         for pg in physical_groups:
             entities = gmsh.model.getEntitiesForPhysicalGroup(pg[0], pg[1])
             name = gmsh.model.getPhysicalName(pg[0], pg[1])
@@ -105,7 +105,7 @@ class FEM_study():
                     elements_tot[elem_index:elem_index+n_elem, 3:5] = elemNodeTags[0].reshape((n_elem, 2))
                 elif elemTypes[0] == 2:  # Triangle
                     elements_tot[elem_index:elem_index+n_elem, 3:6] = elemNodeTags[0].reshape((n_elem, 3))
-                    # Calcul des surfaces des triangles
+                    # Calculation of triangle surfaces
                     coord_nodes_tri = self.nodes[elemNodeTags[0].reshape((n_elem, 3)).astype(int)-1]
                     coord_nodes_tri = coord_nodes_tri[:, :, 1:] 
                     M1 = np.ones((n_elem, 3, 3))
@@ -125,7 +125,7 @@ class FEM_study():
                 
                 elem_index = elem_index + n_elem
             
-            # Remplissage du dictionnaire element_sets
+            # Filling the element_sets dictionary
             if elemTypes[0] == 1:
                 elemType_name = 'beam'
             elif elemTypes[0] == 2:
@@ -143,7 +143,7 @@ class FEM_study():
         
         self.surfaces_tri = surfaces_tri
         
-        # Organisation par type d'élément
+        # Organization by element type
         beam_elements_ind = elements_tot[:, 1] == 1
         beam_elements = elements_tot[beam_elements_ind, :]
         n_beam = beam_elements.shape[0]
@@ -159,7 +159,7 @@ class FEM_study():
         n_quad = quad_elements.shape[0]
         print(f"Number of quadrilateral elements = {n_quad}")
         
-        # Construction du dictionnaire d'éléments
+        # Building the element dictionary
         element_dict = {'nodes': nodes, 'elements': {}}
         elem_nodes = []
         
@@ -196,7 +196,7 @@ class FEM_study():
         self.elem_nodes = elem_nodes
         element_dict["element_sets"] = element_sets
         
-        # Détection des nœuds non utilisés
+        # Detection of unused nodes
         self.fake_nodes = []
         for node in self.nodes:
             if node[0] not in elem_nodes:
@@ -215,19 +215,19 @@ class FEM_study():
     def prepare_all_tri_element_coords(self,nodes_index: jnp.ndarray, nodes_coord: jnp.ndarray, 
                                          elements: jnp.ndarray) -> jnp.ndarray:
         """
-        Prépare les coordonnées de tous les éléments pour un traitement batch
+        Prepare coordinates of all elements for batch processing
     
-        Cette fonction extrait et organise les coordonnées nodales de tous les 
-        éléments dans un seul array pour permettre un calcul vectorisé/parallèle.
+        This function extracts and organizes node coordinates of all 
+        elements into a single array to allow vectorized/parallel computation.
         
         Args:
-        nodes_index: (n_nodes,) array avec les identifiants des nœuds
-        nodes_coord: (n_nodes, 3) array avec [x, y, z] pour chaque nœud
-        elements: (n_elements, n_vertex+1) array avec [elem_id, node1, node2, ...]
+        nodes_index: (n_nodes,) array with node identifiers
+        nodes_coord: (n_nodes, 3) array with [x, y, z] for each node
+        elements: (n_elements, n_vertex+1) array with [elem_id, node1, node2, ...]
         
         Returns:
-        all_coords: array JAX de forme (n_elements, n_nodes_per_elem, 3)
-                contenant les coordonnées (x,y,z) pour chaque élément
+        all_coords: JAX array of shape (n_elements, n_nodes_per_elem, 3)
+                containing (x,y,z) coordinates for each element
         """        
 
         
@@ -235,13 +235,13 @@ class FEM_study():
     
         n_elements = elements.shape[0]
 
-        # Pas de boucles du tout !
+        # No loops at all!
         element_node_ids = elements[:, 1:n_nodes_per_elem+1]
         
-        # Broadcasting pour créer un masque
+        # Broadcasting to create a mask
         mask = (element_node_ids[:, :, None] == nodes_index[None, None, :])
         
-        # Extraire coordonnées avec le masque
+        # Extract coordinates with the mask
         coords = jnp.sum(nodes_coord[None, None, :, :] * mask[:, :, :, None], axis=2)
         
         return coords
@@ -249,26 +249,26 @@ class FEM_study():
 
     def assembling_K_parametric(self,nodes_index,nodes_coord,element_properties: list, materials: list):
         """
-        Assemble la matrice de rigidité globale en fonction de paramètres variables
-        Version fonctionnelle pour la différentiation
+        Assemble the global stiffness matrix based on variable parameters
+        Functional version for differentiation
         
         Args:
-        nodes_index: (n_nodes,) array avec les identifiants des nœuds (static_argnums=0 pour JIT)
-        nodes_coord: (n_nodes, 3) array avec [x, y, z] pour chaque nœud
-        element_properties: dict des propriétés géométriques
-        materials: dict des propriétés matériaux
+        nodes_index: (n_nodes,) array with node identifiers (static_argnums=0 for JIT)
+        nodes_coord: (n_nodes, 3) array with [x, y, z] for each node
+        element_properties: dict of geometric properties
+        materials: dict of material properties
         
         Returns:
-        K: matrice de rigidité (array JAX)
+        K: stiffness matrix (JAX array)
         """
         nodes_index = np.array(nodes_index,dtype=int)
         
         K = jnp.zeros((nodes_index.shape[0]*6, nodes_index.shape[0]*6))
-        # Version vectorisée 
+        # Vectorized version
         
-        # on boucle sur les éléments de réference (pas sur les éléments du maillage), on se limite au element tri donc une seule boucle sur les sets d'éléments
-        # en réalité on boucle sur les set d'élements 
-        # pour eviter les dynamic shape on fait un seul set et on mask les résultats (calcul de matrice élementaire inutile mais évite la recompilation)
+        # we loop over reference elements (not mesh elements), we limit to tri element so single loop over element sets
+        # in fact we loop over element sets
+        # to avoid dynamic shape we create a single set and mask results (elementary matrix calculation unnecessary but avoids recompilation)
         elements_sets = self.elements_tot[:, [0,3,4,5]]
         all_coords = self.prepare_all_tri_element_coords(nodes_index,nodes_coord, elements_sets)
         self.assembler = FastAssembler(
@@ -278,7 +278,7 @@ class FEM_study():
             )
         for i in self.element_dict['element_sets'].keys():
             name = self.element_dict['element_sets'][i]['name']
-            # creation du mask 
+            # mask creation
             mask = (self.elements_tot[:, 2] == i)
             compute_K_ref = self.DKT.compute_K_elem
             def compute_K_single_masked(coords, m, materials, properties):
@@ -289,7 +289,7 @@ class FEM_study():
             K_elem = vmap(compute_K_single_masked)(all_coords,mask,materials_set,property_set)
 
            
-            # Assemblage ultra-rapide
+            # Ultra-fast assembly
             K = self.assembler.assemble(K_elem) + K
         self.K = K
         
@@ -303,19 +303,19 @@ class FEM_study():
                                          elements: jnp.ndarray,
                                          element_type: str) -> jnp.ndarray:
         """
-        Prépare les coordonnées de tous les éléments pour un traitement batch
+        Prepare coordinates of all elements for batch processing
     
-        Cette fonction extrait et organise les coordonnées nodales de tous les 
-        éléments dans un seul array pour permettre un calcul vectorisé/parallèle.
+        This function extracts and organizes node coordinates of all 
+        elements into a single array to allow vectorized/parallel computation.
         
         Args:
-        nodes: (n_nodes, 4) array avec [node_id, x, y, z] pour chaque nœud
-        elements: (n_elements, n_vertex+1) array avec [elem_id, node1, node2, ...]
-        element_type: type d'élément ('beam', 'tri', 'quad')
+        nodes: (n_nodes, 4) array with [node_id, x, y, z] for each node
+        elements: (n_elements, n_vertex+1) array with [elem_id, node1, node2, ...]
+        element_type: element type ('beam', 'tri', 'quad')
         
         Returns:
-        all_coords: array JAX de forme (n_elements, n_nodes_per_elem, 3)
-                contenant les coordonnées (x,y,z) pour chaque élément
+        all_coords: JAX array of shape (n_elements, n_nodes_per_elem, 3)
+                containing (x,y,z) coordinates for each element
         """        
 
         if element_type == 'beam':
@@ -325,17 +325,17 @@ class FEM_study():
         elif element_type == 'quad':
             n_nodes_per_elem = 4
         else:
-            raise ValueError(f"Type d'élément inconnu: {element_type}")
+            raise ValueError(f"Unknown element type: {element_type}")
     
         n_elements = elements.shape[0]
 
-        # Pas de boucles du tout !
+        # No loops at all!
         element_node_ids = elements[:, 1:n_nodes_per_elem+1]
         
-        # Broadcasting pour créer un masque
+        # Broadcasting to create a mask
         mask = (element_node_ids[:, :, None] == nodes[None, None, :, 0])
         
-        # Extraire coordonnées avec le masque
+        # Extract coordinates with the mask
         coords = jnp.sum(nodes[None, None, :, 1:4] * mask[:, :, :, None], axis=2)
         
         return coords
@@ -343,11 +343,11 @@ class FEM_study():
     
     def boundary_conditions(self, nodes_set: List[List[int]], l_dof: List[List[int]]) -> None:
         """
-        Applique les conditions aux limites
+        Apply boundary conditions
         
         Args:
-        nodes_set: liste de listes de nœuds à contraindre
-        l_dof: liste de listes de DDL à bloquer pour chaque ensemble
+        nodes_set: list of lists of nodes to constrain
+        l_dof: list of lists of DOF to block for each set
         """
         self.nodes_set = nodes_set
         self.l_dof = l_dof
@@ -375,46 +375,46 @@ class FEM_study():
     
     def set_rhs(self, rhs: np.ndarray) -> None:
         """
-        Définit le second membre
+        Set the right-hand side
         
         Args:
-        rhs: vecteur du second membre (doit être de dimension 6*n_nodes)
+        rhs: right-hand side vector (must be of dimension 6*n_nodes)
         """
         if rhs.shape[0] != 6 * len(self.nodes):
-            raise ValueError(f'Dimension incorrecte du RHS! '
-                           f'Attendu: {6*len(self.nodes)}, reçu: {rhs.shape[0]}')
+            raise ValueError(f'Incorrect RHS dimension! '
+                           f'Expected: {6*len(self.nodes)}, received: {rhs.shape[0]}')
         self.rhs = jnp.array(rhs)
     
     def solve(self) -> jnp.ndarray:
         """
-        Résout le système KU = F
+        Solve the system KU = F
         
         Returns:
-        U: vecteur des déplacements (array JAX)
+        U: displacement vector (JAX array)
         """
-        # Résolution avec JAX
+        # Solving with JAX
         U = jlinalg.solve(self.K, self.rhs)
         return U
     
     def compute_strain_and_stress(self,nodes_index, U: jnp.ndarray,nodes_coord,element_properties: list, materials: list) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """
-        Calcule les déformations et contraintes aux points de Gauss pour tous les éléments
+        Calculate strains and stresses at Gauss points for all elements
         
         Args:
-        U: vecteur des déplacements (array JAX) (n_nodes,6)
+        U: displacement vector (JAX array) (n_nodes,6)
         
         Returns:
-        strains: array JAX avec les déformations pour chaque élément exprimées dans la base locale de l'élément
-        stresses: array JAX avec les contraintes pour chaque élément exprimées dans la base locale de l'élément
-        points_gauss: array JAX avec les coordonnées des points de Gauss
+        strains: JAX array with strains for each element expressed in the local element basis
+        stresses: JAX array with stresses for each element expressed in the local element basis
+        points_gauss: JAX array with Gauss point coordinates
         """
-        # Cette fonction peut être implémentée en utilisant une approche similaire à compute_K_parametric
-        # en calculant les déformations et contraintes élémentaires par batch, puis en les assemblant dans des arrays globaux.
+        # This function can be implemented using an approach similar to compute_K_parametric
+        # by calculating elementary strains and stresses by batch, then assembling them into global arrays.
 
         strains_list: List[jnp.ndarray]  = []
         stresses_list: List[jnp.ndarray] = []
         points_list: List[jnp.ndarray]   = []
-        #comme pour compute_K_elem il est préfarable d'utiliser un mask
+        # as with compute_K_elem it is preferable to use a mask
         elements_sets = self.elements_tot[:, [0,3,4,5]]
         all_coords = self.prepare_all_tri_element_coords(nodes_index,nodes_coord, elements_sets)
         elem_nodes = (elements_sets[:,1:]-1).astype(int)
@@ -434,7 +434,7 @@ class FEM_study():
             strains_list.append(results[0][mask,:,:])
             stresses_list.append(results[1][mask,:,:])
             points_list.append(results[2][mask,:,:])
-        # concatène les résultats de tous les jeux d'éléments
+        # concatenate results from all element sets
         strains      = jnp.concatenate(strains_list, axis=0)
         stresses     = jnp.concatenate(stresses_list, axis=0)
         points_gauss = jnp.concatenate(points_list, axis=0)
@@ -443,7 +443,7 @@ class FEM_study():
 
 
     def compute_vonMises(self, stress):
-        """Calcule la contrainte de Von Mises à partir des contraintes dans le repère de l'élément"""
+        """Calculate Von Mises stress from stresses in the element reference frame"""
         sigma_x = stress[0]
         sigma_y = stress[1]
         tau_xy = stress[2]
@@ -482,23 +482,23 @@ class FEM_study():
 
 class FastAssembler:
     """
-    Classe qui pré-calcule les indices d'assemblage une seule fois
-    Puis assemble très rapidement pour différentes matrices K
+    Class that pre-computes assembly indices only once
+    Then assembles very quickly for different K matrices
     
-    Idéal pour:
-    - Calculs de sensibilités (K change, connectivité reste la même)
-    - Optimisation (nombreux assemblages)
+    Ideal for:
+    - Sensitivity calculations (K changes, connectivity remains the same)
+    - Optimization (many assemblies)
     """
     
     def __init__(self, elements: np.ndarray, nodes: np.ndarray, 
                  element_type: str):
         """
-        Pré-calcule les indices d'assemblage
+        Pre-compute assembly indices
         
         Args:
-        elements: (n_elements, n_nodes_per_elem+1) connectivité
-        nodes: (n_nodes,) array avec les identifiants des nœuds
-        element_type: 'beam', 'tri', ou 'quad'
+        elements: (n_elements, n_nodes_per_elem+1) connectivity
+        nodes: (n_nodes,) array with node identifiers
+        element_type: 'beam', 'tri', or 'quad'
         """
         self.element_type = element_type
         
@@ -529,7 +529,7 @@ class FastAssembler:
         self._precompute_indices()
     
     def _precompute_indices(self):
-        """Pré-calcule tous les indices d'assemblage"""
+        """Pre-compute all assembly indices"""
         
         # Indices locaux
         local_i = jnp.arange(self.dof_per_elem)
@@ -557,13 +557,13 @@ class FastAssembler:
     @partial(jit, static_argnums=(0,))
     def assemble(self, K_elements: jnp.ndarray) -> jnp.ndarray:
         """
-        Assemble les matrices élémentaires (ultra-rapide)
+        Assemble the elementary matrices (ultra-fast)
         
         Args:
         K_elements: (n_elements, dof_per_elem, dof_per_elem)
         
         Returns:
-        K_global: matrice assemblée
+        K_global: assembled matrix
         """
         values = K_elements.flatten()
         
@@ -574,7 +574,7 @@ class FastAssembler:
     
     def assemble_coo(self, K_elements: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """
-        Assemble en format COO (pour solveurs sparse)
+        Assemble in COO format (for sparse solvers)
         
         Returns:
         row, col, data: triplets COO

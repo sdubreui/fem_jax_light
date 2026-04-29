@@ -5,20 +5,20 @@ from typing import Dict, Tuple
 
 """
 Implementation of DKT (Discrete Kirchhoff Triangle) finite element using JAX
-Version optimisée avec @jit pour des performances maximales
+Optimized version with @jit 
 """
 
 class DKT_element():
     def __init__(self):#, element_property: Dict, material: Dict):
         
         
-        # Points d'intégration de Gauss (coordonnées barycentriques)
+        # Gauss integration points (barycentric coordinates)
         self.int_nodes = jnp.array([[1.0/6.0, 1.0/6.0],
                                      [2.0/3.0, 1.0/6.0],
                                      [1.0/6.0, 2.0/3.0]])
         self.int_weights = jnp.ones(3) * 1.0/6.0
         
-        # Pré-calculer les matrices constitutives (une seule fois) => Non car on veut rendre la fonction de calcul de K_elem paramétrique
+        # Pre-compute constitutive matrices (only once) => No because we want to make the K_elem calculation function parametric
         # self.element_property = element_property
         # self.material = material
         # E = material['E']
@@ -33,7 +33,7 @@ class DKT_element():
         #self.H_m = E * h / (1.0 - nu**2) * H_temp
         #self.H_f = E * h**3 / (12.0 * (1.0 - nu**2)) * H_temp
         
-        # Matrice de transformation pour beta
+        # Transformation matrix for beta
         self.transform_matrix = jnp.array([
             [1, 0, 0],
             [0, 0, -1],
@@ -65,16 +65,16 @@ class DKT_element():
     @partial(jit, static_argnums=(0,))
     def compute_K_elem(self, nodes: jnp.ndarray, material, element_property) -> jnp.ndarray:
         """
-        Calcule la matrice de rigidité élémentaire (version JIT optimisée)
+        Calculate the elementary stiffness matrix (JIT optimized version)
         
         Args:
-        nodes: (3, 3) coordonnées des 3 nœuds du triangle
+        nodes: (3, 3) coordinates of the 3 triangle nodes
         
         Returns:
-        K_e_g: (18, 18) matrice de rigidité dans le repère global
+        K_e_g: (18, 18) stiffness matrix in the global reference frame
         """
         H_m, H_f = self.compute_H(material, element_property)
-        # Appel de la fonction statique JIT-compilée
+        # Call the static JIT-compiled function
         return self._compute_K_static(
             nodes, 
             H_m, 
@@ -88,10 +88,10 @@ class DKT_element():
     @jit
     def _compute_K_static(nodes, H_m, H_f, int_nodes, int_weights, transform_matrix):
         """
-        Fonction statique pour le calcul JIT-compilé
-        Tout le calcul est ici pour maximiser les optimisations JIT
+        Static function for JIT-compiled computation
+        All computation is here to maximize JIT optimizations
         """
-        # === REPÈRE LOCAL ===
+        # === LOCAL REFERENCE FRAME ===
         u = nodes[1, :] - nodes[0, :]
         v_temp = nodes[2, :] - nodes[0, :]
         n = jnp.cross(u, v_temp)
@@ -104,7 +104,7 @@ class DKT_element():
         r_glob_to_loc = jnp.stack([u, v, n])
         coord_loc = jnp.dot(r_glob_to_loc, nodes.T).T
         
-        # === GÉOMÉTRIE (vectorisé) ===
+        # === GEOMETRY (vectorized) ===
         diff = jnp.array([
             coord_loc[1, :2] - coord_loc[0, :2],
             coord_loc[2, :2] - coord_loc[1, :2],
@@ -114,15 +114,15 @@ class DKT_element():
         Cos = diff[:, 0] / lengths
         Sin = diff[:, 1] / lengths
         
-        # === INTÉGRATION ===
+        # === INTEGRATION ===
         K_m = jnp.zeros((6, 6))
         K_f_temp = jnp.zeros((9, 9))
         
-        # Boucle d'intégration (sera déroulée par JIT)
+        # Integration loop (will be unrolled by JIT)
         for k in range(3):
             xi, eta = int_nodes[k]
             
-            # Dérivées des fonctions de forme (inline pour JIT)
+            # Shape function derivatives (inline for JIT)
             d_N = jnp.array([
                 [-1.0, -1.0],
                 [1.0, 0.0],
@@ -132,7 +132,7 @@ class DKT_element():
                 [-4.0*eta, 4.0*(1.0 - xi - 2.0*eta)]
             ])
             
-            # Jacobienne (vectorisé)
+            # Jacobian (vectorized)
             J = jnp.array([
                 [jnp.dot(d_N[:3, 0], coord_loc[:, 0]), jnp.dot(d_N[:3, 0], coord_loc[:, 1])],
                 [jnp.dot(d_N[:3, 1], coord_loc[:, 0]), jnp.dot(d_N[:3, 1], coord_loc[:, 1])]
@@ -141,7 +141,7 @@ class DKT_element():
             det_J = J[0, 0] * J[1, 1] - J[0, 1] * J[1, 0]
             inv_J = jnp.array([[J[1, 1], -J[0, 1]], [-J[1, 0], J[0, 0]]]) / det_J
             
-            # === MATRICE B_m (vectorisée) ===
+            # === B_m MATRIX (vectorized) ===
             dN_dx = inv_J[0, 0]*d_N[:3, 0] + inv_J[0, 1]*d_N[:3, 1]
             dN_dy = inv_J[1, 0]*d_N[:3, 0] + inv_J[1, 1]*d_N[:3, 1]
             
@@ -159,7 +159,7 @@ class DKT_element():
             
             K_f_temp = K_f_temp + int_weights[k] * (B_f.T @ H_f @ B_f) * jnp.abs(det_J)
         
-        # === TRANSFORMATION K_f (vectorisée avec lax.fori_loop ou déployée) ===
+        # === K_f TRANSFORMATION (vectorized with lax.fori_loop or unrolled) ===
         K_f_temp_2 = jnp.zeros((9, 9))
         for i in range(3):
             K_f_temp_2 = K_f_temp_2.at[:, i*3].set(K_f_temp[:, i*3])
@@ -172,24 +172,24 @@ class DKT_element():
             K_f = K_f.at[i*3+1, :].set(-K_f_temp_2[i*3+2, :])
             K_f = K_f.at[i*3+2, :].set(K_f_temp_2[i*3+1, :])
         
-        # Rigidité fictive pour theta_z
+        # Fictitious stiffness for theta_z
         diag = jnp.diagonal(K_f)
         min_val = jnp.min(jnp.where(diag > 1e-15, diag, jnp.inf))
         epsilon = 1e-5 * min_val
         
-        # === ASSEMBLAGE (18×18) ===
+        # === ASSEMBLY (18×18) ===
         K_e = jnp.zeros((18, 18))
         
-        # Assemblage avec boucles (déroulées par JIT)
+        # Assembly with loops (unrolled by JIT)
         for i in range(3):
             # Membrane
             K_e = K_e.at[i*6:i*6+2, i*6:i*6+2].set(K_m[i*2:i*2+2, i*2:i*2+2])
-            # Flexion
+            # Bending
             K_e = K_e.at[i*6+2:i*6+5, i*6+2:i*6+5].set(K_f[i*3:i*3+3, i*3:i*3+3])
-            # Rigidité fictive theta_z
+            # Fictitious stiffness theta_z
             K_e = K_e.at[i*6+5, i*6+5].set(epsilon)
             
-            # Termes hors-diagonale
+            # Off-diagonal terms
             for j in range(2-i):
                 idx_j = i + j + 1
                 # Membrane
@@ -197,13 +197,13 @@ class DKT_element():
                     K_m[idx_j*2:idx_j*2+2, i*2:i*2+2])
                 K_e = K_e.at[i*6:i*6+2, idx_j*6:idx_j*6+2].set(
                     K_m[i*2:i*2+2, idx_j*2:idx_j*2+2])
-                # Flexion
+                # Bending
                 K_e = K_e.at[idx_j*6+2:idx_j*6+5, i*6+2:i*6+5].set(
                     K_f[idx_j*3:idx_j*3+3, i*3:i*3+3])
                 K_e = K_e.at[i*6+2:i*6+5, idx_j*6+2:idx_j*6+5].set(
                     K_f[i*3:i*3+3, idx_j*3:idx_j*3+3])
         
-        # === ROTATION VERS REPÈRE GLOBAL ===
+        # === ROTATION TO GLOBAL REFERENCE FRAME ===
         R = jnp.zeros((18, 18))
         for i in range(6):
             R = R.at[i*3:i*3+3, i*3:i*3+3].set(r_glob_to_loc)
@@ -216,9 +216,9 @@ class DKT_element():
     @jit
     def _compute_B_f_static(inv_J, d_N, d_P, L, Cos, Sin):
         """
-        Calcule la matrice B pour la déformation de flexion (version JIT)
+        Calculate the B matrix for bending deformation (JIT version)
         """
-        # Composantes B_x_xi (vectorisées au maximum)
+        # B_x_xi components (vectorized to the maximum)
         B_x_xi = jnp.array([
             6.*d_P[0, 0]*Cos[0]/(4.*L[0]) - 6.*d_P[2, 0]*Cos[2]/(4.*L[2]),
             d_N[0, 0] - 3./4.*(d_P[0, 0]*Cos[0]**2 + d_P[2, 0]*Cos[2]**2),
@@ -267,7 +267,7 @@ class DKT_element():
             d_N[2, 1] - 3./4.*(d_P[2, 1]*Sin[2]**2 + d_P[1, 1]*Sin[1]**2)
         ])
         
-        # Assemblage B_f (vectorisé)
+        # B_f assembly (vectorized)
         B_f = jnp.stack([
             inv_J[0, 0]*B_x_xi + inv_J[0, 1]*B_x_eta,
             inv_J[1, 0]*B_y_xi + inv_J[1, 1]*B_y_eta,
@@ -281,16 +281,16 @@ class DKT_element():
                                   U_elm: jnp.ndarray, material, element_property
                                   ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """
-        Calcule les déformations et contraintes aux points de Gauss (version JIT)
+        Calculate strains and stresses at Gauss points (JIT version)
         
         Args:
-        nodes: (3, 3) coordonnées des nœuds
-        U_elm: (18,) vecteur des déplacements élémentaires
-        z: position dans l'épaisseur (si None, utilise h/2)
+        nodes: (3, 3) node coordinates
+        U_elm: (18,) elementary displacement vector
+        z: position in thickness (if None, uses h/2)
         
         Returns:
-        strain: dict des déformations aux points de Gauss
-        stress: dict des contraintes aux points de Gauss
+        strain: dict of strains at Gauss points
+        stress: dict of stresses at Gauss points
         """
 
         
@@ -314,9 +314,9 @@ class DKT_element():
     @staticmethod
     @jit
     def _compute_strain_stress_static(nodes, U_elm, z, C, int_nodes, int_weights):
-        """Calcul JIT des déformations et contraintes"""
+        """JIT computation of strains and stresses"""
         
-        # Repère local
+        # Local reference frame
         u = nodes[1, :] - nodes[0, :]
         v_temp = nodes[2, :] - nodes[0, :]
         n = jnp.cross(u, v_temp)
@@ -329,7 +329,7 @@ class DKT_element():
         r_glob_to_loc = jnp.stack([u, v, n])
         coord_loc = jnp.dot(r_glob_to_loc, nodes.T).T
         
-        # Géométrie
+        # Geometry
         diff = jnp.array([
             coord_loc[1, :2] - coord_loc[0, :2],
             coord_loc[2, :2] - coord_loc[1, :2],
@@ -354,7 +354,7 @@ class DKT_element():
             U_elm_loc_transformed = U_elm_loc_transformed.at[6*i + 3].set(theta_y)
             U_elm_loc_transformed = U_elm_loc_transformed.at[6*i + 4].set(-theta_x)
         
-        # Calcul aux points de Gauss (utilisation de listes pour compatibilité avec return)
+        # Computation at Gauss points (using lists for return compatibility)
         strains_list = []
         stresses_list = []
         coords_list = []
@@ -362,7 +362,7 @@ class DKT_element():
         for k in range(3):
             xi, eta = int_nodes[k]
             
-            # Dérivées des fonctions de forme
+            # Shape function derivatives
             d_N = jnp.array([
                 [-1.0, -1.0],
                 [1.0, 0.0],
@@ -407,7 +407,7 @@ class DKT_element():
                                  U_elm_loc_transformed[16]])
             strain_b = jnp.dot(B_f, U_w_beta)
             
-            # Déformations totales
+            # Total strains
             strain_tot = strain_m + z * strain_b
             
             # Contraintes
@@ -415,25 +415,25 @@ class DKT_element():
             stress_b = z * jnp.dot(C, strain_b)
             stress_tot = stress_m + stress_b
             
-            # Coordonnées du point de Gauss
+            # Gauss point coordinates
             N = jnp.array([1.0 - xi - eta, xi, eta])
             x = jnp.dot(N, coord_loc[:, 0])
             y = jnp.dot(N, coord_loc[:, 1])
             gauss_coord = jnp.array([x, y, jnp.mean(coord_loc[:, 2])])
             gauss_coord_global = jnp.dot(r_glob_to_loc.T, gauss_coord)
             
-            # Stocker les résultats
+            # Store results
             strains_list.append(jnp.concatenate([strain_m, strain_b, strain_tot]))
             stresses_list.append(jnp.concatenate([stress_m, stress_b, stress_tot]))
             coords_list.append(gauss_coord_global)
         
-        # Convertir en arrays
+        # Convert to arrays
         strains_array = jnp.stack(strains_list)
         stresses_array = jnp.stack(stresses_list)
         coords_array = jnp.stack(coords_list)
         
-        # Note: On retourne des arrays au lieu de dicts pour compatibilité JIT
-        # L'utilisateur devra reconstruire les dicts si nécessaire
+        # Note: We return arrays instead of dicts for JIT compatibility
+        # The user will need to reconstruct dicts if necessary
         # strains_array shape: (3, 9) => [strain_m(3), strain_b(3), strain_tot(3)], strain_m(3) = [epsilon_x, epsilon_y, gamma_xy]
 
         return strains_array, stresses_array, coords_array
