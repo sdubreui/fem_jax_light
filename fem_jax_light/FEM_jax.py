@@ -550,7 +550,6 @@ class FEM_study():
         U_elem = U[elem_nodes]
         U_elem_flat = U_elem.reshape(U_elem.shape[0],-1)
         for i in self.element_dict['element_sets'].keys():
-            name = self.element_dict['element_sets'][i]['name']
             mask = (self.elements_tot[:, 2] == i)
             compute_strain_stress_ref = self.DKT.compute_strain_and_stress
             def compute_strain_stress(coords,U,material,element_property):
