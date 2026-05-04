@@ -591,71 +591,48 @@ class FEM_study():
     
     @staticmethod
     @jit
-    def compute_triangle_area(coords_3nodes: jnp.ndarray) -> jnp.ndarray:
+    def compute_all_triangle_areas(all_coords: jnp.ndarray) -> jnp.ndarray:
         """
-        Compute area of a single triangle in 3D space (differentiable).
-        
-        Uses cross product formula: Area = 0.5 * ||(B-A) × (C-A)||
+        Ultra-fast batch computation (no vmap).
         
         Args:
-            coords_3nodes: (3, 3) array with [x, y, z] for each of 3 vertices
+            all_coords: (n_elements, 3, 3)
             
         Returns:
-            area: scalar (positive, differentiable w.r.t. coordinates)
+            areas: (n_elements,)
         """
-        A = coords_3nodes[0]
-        B = coords_3nodes[1]
-        C = coords_3nodes[2]
+        A = all_coords[:, 0, :]
+        B = all_coords[:, 1, :]
+        C = all_coords[:, 2, :]
         
         AB = B - A
         AC = C - A
+        
         cross = jnp.cross(AB, AC)
-        area = 0.5 * jnp.linalg.norm(cross)
         
-        return area
-    
-    
-    @staticmethod
-    @jit
-    def compute_all_triangle_areas(all_coords: jnp.ndarray) -> jnp.ndarray:
-        """
-        Compute areas of all triangles (vectorized with vmap, differentiable).
+        areas = 0.5 * jnp.sqrt(jnp.sum(cross**2, axis=1))
         
-        Args:
-            all_coords: (n_elements, 3, 3) array where each element contains
-                       coordinates of 3 vertices in 3D
-            
-        Returns:
-            areas: (n_elements,) array of triangle areas
-        """
-        compute_area_single = FEM_study.compute_triangle_area
-        areas = vmap(compute_area_single)(all_coords)
         return areas
     
     
     def get_triangle_areas_parametric(self, nodes_coord: jnp.ndarray, 
-                                      elements: jnp.ndarray) -> jnp.ndarray:
+                                  elements: jnp.ndarray) -> jnp.ndarray:
         """
-        Get all triangle areas from node coordinates (differentiable w.r.t. coordinates).
-        
-        Designed for use in optimization where node coordinates are design variables.
-        
-        Args:
-            nodes_coord: (n_nodes, 3) array with [x, y, z] for each node
-            elements: (n_elements, 4) array with [elem_id, node1, node2, node3]
-            
-        Returns:
-            areas: (n_elements,) array of triangle areas (differentiable)
+        Optimized version (no intermediate overhead).
         """
-        # Extract node indices (convert from 1-indexed to 0-indexed)
-        node_indices = elements[:, 1:4].astype(int) - 1
-        
-        # Gather coordinates for all elements
-        all_coords = nodes_coord[node_indices]  # (n_elements, 3, 3)
-        
-        # Compute areas using JIT-compiled vectorized function
-        areas = self.compute_all_triangle_areas(all_coords)
-        
+        node_indices = elements[:, 1:4].astype(jnp.int32) - 1
+
+        A = nodes_coord[node_indices[:, 0]]
+        B = nodes_coord[node_indices[:, 1]]
+        C = nodes_coord[node_indices[:, 2]]
+
+        AB = B - A
+        AC = C - A
+
+        cross = jnp.cross(AB, AC)
+
+        areas = 0.5 * jnp.sqrt(jnp.sum(cross**2, axis=1))
+
         return areas
   
     def post_processing(self,U,file_name):
