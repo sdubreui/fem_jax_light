@@ -527,7 +527,7 @@ class FEM_study():
     
     def compute_strain_and_stress(self,nodes_index, U: jnp.ndarray,nodes_coord,element_properties: list, materials: list) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """
-        Calculate strains and stresses at Gauss points for all elements
+        Calculate strains and stresses at Gauss points for all elements (optimized version)
         
         Args:
         U: displacement vector (JAX array) (n_nodes,6)
@@ -537,37 +537,36 @@ class FEM_study():
         stresses: JAX array with stresses for each element expressed in the local element basis
         points_gauss: JAX array with Gauss point coordinates
         """
-        # This function can be implemented using an approach similar to compute_K_parametric
-        # by calculating elementary strains and stresses by batch, then assembling them into global arrays.
-
-        strains_list: List[jnp.ndarray]  = []
-        stresses_list: List[jnp.ndarray] = []
-        points_list: List[jnp.ndarray]   = []
-        # as with compute_K_elem it is preferable to use a mask
+        # Optimized: single vmap call instead of looping over element sets
         elements_sets = self.elements_tot[:, [0,3,4,5]]
-        all_coords = self.prepare_all_tri_element_coords(nodes_index,nodes_coord, elements_sets)
-        elem_nodes = (elements_sets[:,1:]-1).astype(int)
+        all_coords = self.prepare_all_tri_element_coords(nodes_index, nodes_coord, elements_sets)
+        elem_nodes = (elements_sets[:, 1:] - 1).astype(int)
         U_elem = U[elem_nodes]
-        U_elem_flat = U_elem.reshape(U_elem.shape[0],-1)
-        for i in self.element_dict['element_sets'].keys():
-            mask = (self.elements_tot[:, 2] == i)
-            compute_strain_stress_ref = self.DKT.compute_strain_and_stress
-            def compute_strain_stress(coords,U,material,element_property):
-                strain,stress,points = compute_strain_stress_ref(coords,U,material,element_property)
-                return strain,stress,points
-
-            materials_set = jnp.atleast_2d(materials[i-1]).repeat(mask.shape[0],axis=0)
-            property_set = jnp.atleast_2d(element_properties[i-1]).repeat(mask.shape[0],axis=0)
-            results = vmap(compute_strain_stress)(all_coords,U_elem_flat,materials_set,property_set)
-            strains_list.append(results[0][mask,:,:])
-            stresses_list.append(results[1][mask,:,:])
-            points_list.append(results[2][mask,:,:])
-        # concatenate results from all element sets
-        strains      = jnp.concatenate(strains_list, axis=0)
-        stresses     = jnp.concatenate(stresses_list, axis=0)
-        points_gauss = jnp.concatenate(points_list, axis=0)
-
-        return strains, stresses, points_gauss    
+        U_elem_flat = U_elem.reshape(U_elem.shape[0], -1)
+        
+        # Prepare materials and properties for all elements at once
+        n_elements = self.elements_tot.shape[0]
+        element_type_ids = self.elements_tot[:, 2].astype(int)
+        
+        # Initialize arrays for all elements
+        materials_all = jnp.zeros((n_elements, materials[0].shape[0]))
+        properties_all = jnp.zeros((n_elements, element_properties[0].shape[0]))
+        
+        # Populate arrays for each element set
+        for set_id in self.element_dict['element_sets'].keys():
+            mask = (element_type_ids == set_id)
+            materials_all = materials_all.at[mask].set(materials[set_id - 1])
+            properties_all = properties_all.at[mask].set(element_properties[set_id - 1])
+        
+        # Single vmap call on all elements (optimized pattern)
+        compute_strain_stress_ref = self.DKT.compute_strain_and_stress
+        def compute_strain_stress_single(coords, U, material, element_property):
+            strain, stress, points = compute_strain_stress_ref(coords, U, material, element_property)
+            return strain, stress, points
+        
+        results = vmap(compute_strain_stress_single)(all_coords, U_elem_flat, materials_all, properties_all)
+        
+        return results[0], results[1], results[2]    
 
 
     def compute_vonMises(self, stress):
