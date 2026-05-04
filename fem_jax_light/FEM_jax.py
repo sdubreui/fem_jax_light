@@ -531,6 +531,8 @@ class FEM_study():
         
         Args:
         U: displacement vector (JAX array) (n_nodes,6)
+        element_properties: (n_sets, n_props) array or list of property arrays
+        materials: (n_sets, n_mat) array or list of material arrays
         
         Returns:
         strains: JAX array with strains for each element expressed in the local element basis
@@ -544,19 +546,26 @@ class FEM_study():
         U_elem = U[elem_nodes]
         U_elem_flat = U_elem.reshape(U_elem.shape[0], -1)
         
-        # Prepare materials and properties for all elements at once
-        n_elements = self.elements_tot.shape[0]
-        element_type_ids = self.elements_tot[:, 2].astype(int)
-        
-        # Initialize arrays for all elements
-        materials_all = jnp.zeros((n_elements, materials[0].shape[0]))
-        properties_all = jnp.zeros((n_elements, element_properties[0].shape[0]))
-        
-        # Populate arrays for each element set
-        for set_id in self.element_dict['element_sets'].keys():
-            mask = (element_type_ids == set_id)
-            materials_all = materials_all.at[mask].set(materials[set_id - 1])
-            properties_all = properties_all.at[mask].set(element_properties[set_id - 1])
+        # Handle materials and properties: convert to JAX arrays if needed
+        # This works whether they're lists, numpy arrays, or already JAX arrays
+        try:
+            # Try treating as already-stacked arrays (most efficient)
+            materials_all = jnp.asarray(materials)
+            properties_all = jnp.asarray(element_properties)
+            
+            # Get element type ids and use them for indexing
+            element_type_ids = np.asarray(self.elements_tot[:, 2], dtype=int) - 1
+            materials_all = materials_all[element_type_ids]
+            properties_all = properties_all[element_type_ids]
+        except (TypeError, IndexError):
+            # Fallback: assume lists of individual arrays
+            # Convert each to numpy first, stack, then JAX
+            materials_np = np.array([np.asarray(m, dtype=float) for m in materials])
+            properties_np = np.array([np.asarray(p, dtype=float) for p in element_properties])
+            
+            element_type_ids = np.asarray(self.elements_tot[:, 2], dtype=int) - 1
+            materials_all = jnp.asarray(materials_np[element_type_ids])
+            properties_all = jnp.asarray(properties_np[element_type_ids])
         
         # Single vmap call on all elements (optimized pattern)
         compute_strain_stress_ref = self.DKT.compute_strain_and_stress
@@ -569,6 +578,7 @@ class FEM_study():
         return results[0], results[1], results[2]    
 
 
+    @partial(jit, static_argnums=(0,))
     def compute_vonMises(self, stress):
         """Calculate Von Mises stress from stresses in the element reference frame"""
         sigma_x = stress[0]
@@ -577,6 +587,76 @@ class FEM_study():
         
         von_mises = jnp.sqrt(sigma_x**2 - sigma_x*sigma_y + sigma_y**2 + 3*tau_xy**2)
         return von_mises
+    
+    
+    @staticmethod
+    @jit
+    def compute_triangle_area(coords_3nodes: jnp.ndarray) -> jnp.ndarray:
+        """
+        Compute area of a single triangle in 3D space (differentiable).
+        
+        Uses cross product formula: Area = 0.5 * ||(B-A) × (C-A)||
+        
+        Args:
+            coords_3nodes: (3, 3) array with [x, y, z] for each of 3 vertices
+            
+        Returns:
+            area: scalar (positive, differentiable w.r.t. coordinates)
+        """
+        A = coords_3nodes[0]
+        B = coords_3nodes[1]
+        C = coords_3nodes[2]
+        
+        AB = B - A
+        AC = C - A
+        cross = jnp.cross(AB, AC)
+        area = 0.5 * jnp.linalg.norm(cross)
+        
+        return area
+    
+    
+    @staticmethod
+    @jit
+    def compute_all_triangle_areas(all_coords: jnp.ndarray) -> jnp.ndarray:
+        """
+        Compute areas of all triangles (vectorized with vmap, differentiable).
+        
+        Args:
+            all_coords: (n_elements, 3, 3) array where each element contains
+                       coordinates of 3 vertices in 3D
+            
+        Returns:
+            areas: (n_elements,) array of triangle areas
+        """
+        compute_area_single = FEM_study.compute_triangle_area
+        areas = vmap(compute_area_single)(all_coords)
+        return areas
+    
+    
+    def get_triangle_areas_parametric(self, nodes_coord: jnp.ndarray, 
+                                      elements: jnp.ndarray) -> jnp.ndarray:
+        """
+        Get all triangle areas from node coordinates (differentiable w.r.t. coordinates).
+        
+        Designed for use in optimization where node coordinates are design variables.
+        
+        Args:
+            nodes_coord: (n_nodes, 3) array with [x, y, z] for each node
+            elements: (n_elements, 4) array with [elem_id, node1, node2, node3]
+            
+        Returns:
+            areas: (n_elements,) array of triangle areas (differentiable)
+        """
+        # Extract node indices (convert from 1-indexed to 0-indexed)
+        node_indices = elements[:, 1:4].astype(int) - 1
+        
+        # Gather coordinates for all elements
+        all_coords = nodes_coord[node_indices]  # (n_elements, 3, 3)
+        
+        # Compute areas using JIT-compiled vectorized function
+        areas = self.compute_all_triangle_areas(all_coords)
+        
+        return areas
   
     def post_processing(self,U,file_name):
         """
