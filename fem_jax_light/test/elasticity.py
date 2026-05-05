@@ -24,7 +24,7 @@ F = jnp.zeros((len(nodes)*6,))
 F = F.at[int(6*(nodes_x1-1)+2)].set(1000.0)
 fem.set_rhs(F)
 # Assembling the rigidity matrix
-K = fem.assembling_K_parametric(nodes[:,0],nodes[:,1:], element_property, material)
+K = fem.assembling_K_parametric(nodes[:,1:], element_property, material)
 # Boundary conditions
 ind = np.sqrt(nodes[:,1]**2+nodes[:,2]**2+nodes[:,3]**2) >= 0.48
 nodes_x0 = nodes[ind,0]
@@ -57,7 +57,7 @@ element_type = {'tri': 'DKT_jax'}
 element_property = [[h]]
 material = [[E,nu]] 
 # Create FEM study
-fem_sp = FEM_study(mesh_file,element_type,element_property,material,mode = 'sparse')
+fem_sp = FEM_study(mesh_file,element_type,element_property,material)
 # Right hand side
 nodes = fem_sp.nodes
 ind = np.sqrt(nodes[:,1]**2+nodes[:,2]**2+nodes[:,3]**2).argmin()
@@ -111,7 +111,7 @@ F = jnp.zeros((len(nodes)*6,))
 F = F.at[int(6*(nodes_x1-1)+2)].set(1000.0)
 fem.set_rhs(F)
 # Assembling the rigidity matrix
-K = fem.assembling_K_parametric(nodes[:,0],nodes[:,1:], element_property, material)
+K = fem.assembling_K_parametric(nodes[:,1:], element_property, material)
 # Boundary conditions
 ind = np.sqrt(nodes[:,1]**2+nodes[:,2]**2+nodes[:,3]**2) >= 0.48
 nodes_x0 = nodes[ind,0]
@@ -147,7 +147,7 @@ element_type = {'tri': 'DKT_jax'}
 element_property = [[h]]
 material = [[E,nu]] 
 # Create FEM study
-fem_sp = FEM_study(mesh_file,element_type,element_property,material,mode = 'sparse')
+fem_sp = FEM_study(mesh_file,element_type,element_property,material)
 # Right hand side
 nodes = fem_sp.nodes
 ind = np.sqrt(nodes[:,1]**2+nodes[:,2]**2+nodes[:,3]**2).argmin()

@@ -50,7 +50,17 @@ class FEM_study():
  
         # Read mesh file (remains in NumPy)
         element_dict, elements_tot = self.read_mesh_file()
-
+        
+        elements_sets = self.elements_tot[:, [0,3,4,5]]
+        self.element_types = jnp.array(elements_tot[:, 2], dtype=jnp.int32)
+        nodes_index = np.array(self.nodes[:,0], dtype=int)
+        self.assembler = FastAssembler(
+                elements_sets,
+                nodes_index,
+                'tri'
+            )
+        self.nodes_index = jnp.array(self.nodes[:,0],dtype=jnp.int32)
+        self.elements_sets = jnp.array(elements_tot[:, [0,3,4,5]], dtype=jnp.int32)
         # Creation of DKT element
         self.DKT = DKT_element()
 
@@ -248,7 +258,7 @@ class FEM_study():
         return coords
 
 
-    def assembling_K_parametric(self,nodes_index,nodes_coord,element_properties: list, materials: list):
+    def assembling_K_parametric(self,nodes_coord,element_properties: list, materials: list):
         """
         Assemble the global stiffness matrix based on variable parameters
         Functional version for differentiation
@@ -262,23 +272,19 @@ class FEM_study():
         Returns:
         K: stiffness matrix (JAX array)
         """
-        nodes_index = np.array(nodes_index,dtype=int)
+        
     
         # Vectorized version
         
         # we loop over reference elements (not mesh elements), we limit to tri element so single loop over element sets
         # in fact we loop over element sets
         # to avoid dynamic shape we create a single set and mask results (elementary matrix calculation unnecessary but avoids recompilation)
-        elements_sets = self.elements_tot[:, [0,3,4,5]]
-        all_coords = self.prepare_all_tri_element_coords(nodes_index,nodes_coord, elements_sets)
-        self.assembler = FastAssembler(
-                elements_sets,
-                nodes_index,
-                'tri'
-            )
+        
+        all_coords = self.prepare_all_tri_element_coords(self.nodes_index,nodes_coord, self.elements_sets)
+
         
         #initialization of K
-        K = jnp.zeros((nodes_index.shape[0]*6, nodes_index.shape[0]*6))
+        K = jnp.zeros((self.nodes_index.shape[0]*6, self.nodes_index.shape[0]*6))
                                                                                                                  
         for i in self.element_dict['element_sets'].keys():
             name = self.element_dict['element_sets'][i]['name']
