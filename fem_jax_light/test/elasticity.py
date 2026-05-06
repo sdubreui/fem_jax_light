@@ -22,19 +22,20 @@ ind = np.sqrt(nodes[:,1]**2+nodes[:,2]**2+nodes[:,3]**2).argmin()
 nodes_x1 = nodes[ind,0]
 F = jnp.zeros((len(nodes)*6,))
 F = F.at[int(6*(nodes_x1-1)+2)].set(1000.0)
-fem.set_rhs(F)
+rhs = fem.set_rhs(F)
 # Assembling the rigidity matrix
 K = fem.assembling_K_parametric(nodes[:,1:], element_property, material)
 # Boundary conditions
 ind = np.sqrt(nodes[:,1]**2+nodes[:,2]**2+nodes[:,3]**2) >= 0.48
 nodes_x0 = nodes[ind,0]
-fem.nodes_sets = [nodes_x0]
+nodes_sets = [nodes_x0]
 l_dof_clamped = [[0,1,2,3,4,5]]
-fem.l_dof = [l_dof_clamped]
+l_dof = [l_dof_clamped]
+fem.create_constrained_DOFs(nodes_sets, l_dof)
 # Apply boundary conditions
-fem.boundary_conditions(fem.nodes_sets,fem.l_dof)
+K, rhs = fem.boundary_conditions(K, rhs)
 # solve 
-Us = fem.solve()
+Us = fem.solve(K,rhs)
 # comparison with reference solution
 a = 0.5
 F1 = 1000.0
@@ -64,19 +65,15 @@ ind = np.sqrt(nodes[:,1]**2+nodes[:,2]**2+nodes[:,3]**2).argmin()
 nodes_x1 = nodes[ind,0]
 F = jnp.zeros((len(nodes)*6,))
 F = F.at[int(6*(nodes_x1-1)+2)].set(1000.0)
-fem_sp.set_rhs(F)
+rhs = fem_sp.set_rhs(F)
 # Assembling the rigidity matrix
-K_sp = fem_sp.assembling_K_parametric_sparse(nodes[:,0],nodes[:,1:], element_property, material)
+K_sp = fem_sp.assembling_K_parametric_sparse(nodes[:,1:], element_property, material)
 # Boundary conditions
-ind = np.sqrt(nodes[:,1]**2+nodes[:,2]**2+nodes[:,3]**2) >= 0.48
-nodes_x0 = nodes[ind,0]
-fem_sp.nodes_sets = [nodes_x0]
-l_dof_clamped = [[0,1,2,3,4,5]]
-fem_sp.l_dof = [l_dof_clamped]
+fem_sp.create_constrained_DOFs(nodes_sets, l_dof)
 # Apply boundary conditions
-fem_sp.boundary_conditions_sparse(fem_sp.nodes_sets,fem_sp.l_dof)
+K_sp, rhs = fem_sp.boundary_conditions_sparse(K_sp, rhs)
 # solve 
-Us_sparse = fem_sp.solve_sparse()
+Us_sparse = fem_sp.solve_sparse(K_sp, rhs)
 # comparison with reference solution
 a = 0.5
 F1 = 1000.0
@@ -109,19 +106,20 @@ ind = np.sqrt(nodes[:,1]**2+nodes[:,2]**2+nodes[:,3]**2).argmin()
 nodes_x1 = nodes[ind,0]
 F = jnp.zeros((len(nodes)*6,))
 F = F.at[int(6*(nodes_x1-1)+2)].set(1000.0)
-fem.set_rhs(F)
+rhs = fem.set_rhs(F)
 # Assembling the rigidity matrix
 K = fem.assembling_K_parametric(nodes[:,1:], element_property, material)
 # Boundary conditions
 ind = np.sqrt(nodes[:,1]**2+nodes[:,2]**2+nodes[:,3]**2) >= 0.48
 nodes_x0 = nodes[ind,0]
-fem.nodes_sets = [nodes_x0]
+nodes_sets = [nodes_x0]
 l_dof_simply_supported = [[2]]
-fem.l_dof = [l_dof_simply_supported]
+l_dof = [l_dof_simply_supported]
+fem.create_constrained_DOFs(nodes_sets, l_dof)
 # Apply boundary conditions
-fem.boundary_conditions(fem.nodes_sets,fem.l_dof)
+K, rhs = fem.boundary_conditions(K, rhs)
 # solve 
-Us = fem.solve()
+Us = fem.solve(K,rhs)
 # Post-processing
 fem.post_processing(Us,"test")
 # comparison with reference solution
@@ -154,19 +152,15 @@ ind = np.sqrt(nodes[:,1]**2+nodes[:,2]**2+nodes[:,3]**2).argmin()
 nodes_x1 = nodes[ind,0]
 F = jnp.zeros((len(nodes)*6,))
 F = F.at[int(6*(nodes_x1-1)+2)].set(1000.0)
-fem_sp.set_rhs(F)
+rhs = fem_sp.set_rhs(F)
 # Assembling the rigidity matrix
-K_sp = fem_sp.assembling_K_parametric_sparse(nodes[:,0],nodes[:,1:], element_property, material)
+K_sp = fem_sp.assembling_K_parametric_sparse(nodes[:,1:], element_property, material)
 # Boundary conditions
-ind = np.sqrt(nodes[:,1]**2+nodes[:,2]**2+nodes[:,3]**2) >= 0.48
-nodes_x0 = nodes[ind,0]
-fem_sp.nodes_sets = [nodes_x0]
-l_dof_clamped = [[2]]
-fem_sp.l_dof = [l_dof_clamped]
+fem_sp.create_constrained_DOFs(nodes_sets, l_dof)
 # Apply boundary conditions
-fem_sp.boundary_conditions_sparse(fem_sp.nodes_sets,fem_sp.l_dof)
+K_sp, rhs = fem_sp.boundary_conditions_sparse(K_sp, rhs)
 # solve 
-Us_sparse = fem_sp.solve_sparse()
+Us_sparse = fem_sp.solve_sparse(K_sp, rhs)
 # comparison with reference solution
 a = 0.5
 F1 = 1000.0
