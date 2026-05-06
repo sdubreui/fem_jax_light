@@ -61,9 +61,36 @@ class FEM_study():
             )
         self.nodes_index = jnp.array(self.nodes[:,0],dtype=jnp.int32)
         self.elements_sets = jnp.array(elements_tot[:, [0,3,4,5]], dtype=jnp.int32)
+
+
         # Creation of DKT element
         self.DKT = DKT_element()
 
+    def create_constrained_DOFs(self, nodes_set_bc: List[List[int]], l_dof_bc: List[List[int]]):
+        # construire tous les DOFs bloqués
+        constrained_dofs = []
+        nodes_index = self.nodes[:, 0].astype(int)
+        for i in range(len(nodes_set_bc)):
+            nodes = jnp.array(nodes_set_bc[i])
+            dofs = jnp.array(l_dof_bc[i])
+
+            # mapping node -> index
+            # (remplace np.argwhere)
+            node_indices = jnp.argmax(nodes_index[None, :] == nodes[:, None], axis=1)
+
+            # construire DOFs globaux
+            dof_indices = 6 * node_indices[:, None] + dofs[None, :]
+            constrained_dofs.append(dof_indices.reshape(-1))
+
+        constrained_dofs = jnp.concatenate(constrained_dofs)
+        self.constrained_dofs = constrained_dofs
+        # créer masque global
+        n = nodes_index.shape[0] * 6
+        mask = jnp.ones(n)
+        mask = mask.at[constrained_dofs].set(0.0)   
+        self.mask_bc = mask 
+
+        
 
     def read_mesh_file(self) -> Tuple[Dict, np.ndarray]:
         """
@@ -257,7 +284,7 @@ class FEM_study():
         
         return coords
 
-
+    @partial(jit, static_argnums=(0,))
     def assembling_K_parametric(self,nodes_coord,element_properties: list, materials: list):
         """
         Assemble the global stiffness matrix based on variable parameters
@@ -305,14 +332,13 @@ class FEM_study():
                                                                      
         return K
 
-
-    def assembling_K_parametric_sparse(self,nodes_index,nodes_coord,element_properties: list, materials: list):
+    @partial(jit, static_argnums=(0,))
+    def assembling_K_parametric_sparse(self,nodes_coord,element_properties: list, materials: list):
         """
         Assemble the global stiffness matrix in sparse formatbased on variable parameters
         Functional version for differentiation
         
         Args:
-        nodes_index: (n_nodes,) array with node identifiers (static_argnums=0 for JIT)
         nodes_coord: (n_nodes, 3) array with [x, y, z] for each node
         element_properties: list of geometric properties
         materials: list of material properties
@@ -320,20 +346,14 @@ class FEM_study():
         Returns:
         K: stiffness matrix (JAX array)
         """
-        nodes_index = np.array(nodes_index,dtype=int)
-    
-        # Vectorized version
+
         
         # we loop over reference elements (not mesh elements), we limit to tri element so single loop over element sets
         # in fact we loop over element sets
         # to avoid dynamic shape we create a single set and mask results (elementary matrix calculation unnecessary but avoids recompilation)
-        elements_sets = self.elements_tot[:, [0,3,4,5]]
-        all_coords = self.prepare_all_tri_element_coords(nodes_index,nodes_coord, elements_sets)
-        self.assembler = FastAssembler(
-                elements_sets,
-                nodes_index,
-                'tri'
-            )
+
+        all_coords = self.prepare_all_tri_element_coords(self.nodes_index,nodes_coord, self.elements_sets)
+
         
         #initialization of K
         K = jnp.zeros(self.assembler.flat_indices.shape[0])
@@ -354,9 +374,9 @@ class FEM_study():
            
             # Ultra-fast assembly
             K = self.assembler.assemble_coo(K_elem)[1] + K
-        K = sparse.BCOO((K,self.assembler.flat_indices),shape=(nodes_index.shape[0]*6, nodes_index.shape[0]*6))
-        self.K = K
-        return self.K
+        K = sparse.BCOO((K,self.assembler.flat_indices),shape=(self.nodes_index.shape[0]*6, self.nodes_index.shape[0]*6))
+
+        return K
 
 
 
@@ -401,30 +421,46 @@ class FEM_study():
         
         return coords
 
-    
-    def boundary_conditions(self, nodes_set: List[List[int]], l_dof: List[List[int]]) -> None:
-        """
-        Apply boundary conditions
+    # @partial(jit, static_argnums=(0,))
+    # def boundary_conditions(self, nodes_set: List[List[int]], l_dof: List[List[int]],K, rhs) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    #     """
+    #     Apply boundary conditions
         
-        Args:
-        nodes_set: list of lists of nodes to constrain
-        l_dof: list of lists of DOF to block for each set
-        """
-        self.nodes_set = nodes_set
-        self.l_dof = l_dof
-        for i, nodes in enumerate(nodes_set):
-            for node in nodes:
-                ind_node = np.argwhere(self.nodes[:, 0] == node)[0, 0]
-                for dof in l_dof[i]:
-                    self.K = self.K.at[:, 6*ind_node + dof].set(0.0)
-                    self.K = self.K.at[6*ind_node + dof, :].set(0.0)
-                    self.K = self.K.at[6*ind_node + dof, 6*ind_node + dof].set(1.0)
-                    self.rhs = self.rhs.at[6*ind_node + dof].set(0.0)
+    #     Args:
+    #     nodes_set: list of lists of nodes to constrain
+    #     l_dof: list of lists of DOF to block for each set
+    #     """
+    #     for i, nodes in enumerate(nodes_set):
+    #         for node in nodes:
+    #             ind_node = np.argwhere(self.nodes[:, 0] == node)[0, 0]
+    #             for dof in l_dof[i]:
+    #                 K = K.at[:, 6*ind_node + dof].set(0.0)
+    #                 K = K.at[6*ind_node + dof, :].set(0.0)
+    #                 K = K.at[6*ind_node + dof, 6*ind_node + dof].set(1.0)
+    #                 rhs = rhs.at[6*ind_node + dof].set(0.0)
                                     
+    #     return K, rhs
 
-                    
-    
-    def boundary_conditions_sparse(self, nodes_set: List[List[int]], l_dof: List[List[int]]):
+    @partial(jit, static_argnums=(0,))
+    def boundary_conditions(self, K, rhs):
+        constrained_dofs = self.constrained_dofs
+        mask = self.mask_bc
+
+
+        # appliquer sur K (zéro lignes + colonnes)
+        K = K * mask[:, None] * mask[None, :]
+
+        # remettre diagonale à 1 sur DOFs bloqués
+        K = K.at[constrained_dofs, constrained_dofs].set(1.0)
+
+        # RHS
+        rhs = rhs * mask
+
+        return K, rhs
+
+
+    @partial(jit, static_argnums=(0,))
+    def boundary_conditions_sparse(self, K, rhs) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """
         JAX-compatible Dirichlet BC application for BCOO sparse matrix.
 
@@ -439,35 +475,35 @@ class FEM_study():
             (K_new, rhs_new)
         """
 
-        # ---- Step 1: map node ids -> indices (no argwhere!) ----
-        # Build lookup table once (must be static outside jit ideally)
-        node_ids = self.nodes[:, 0]
+        # # ---- Step 1: map node ids -> indices (no argwhere!) ----
+        # # Build lookup table once (must be static outside jit ideally)
+        # node_ids = self.nodes[:, 0]
 
-        def find_index(n):
-            return jnp.argmax(node_ids == n)  # safe if unique
+        # def find_index(n):
+        #     return jnp.argmax(node_ids == n)  # safe if unique
 
-        # Vectorize mapping
-        find_index_vmap = vmap(find_index)
+        # # Vectorize mapping
+        # find_index_vmap = vmap(find_index)
 
-        # ---- Step 2: build constrained dof indices ----
-        constrained_dofs = []
+        # # ---- Step 2: build constrained dof indices ----
+        # constrained_dofs = []
 
-        for i, node_list in enumerate(nodes_set):
-            node_array = jnp.array(node_list)
-            node_idx = find_index_vmap(node_array)
+        # for i, node_list in enumerate(nodes_set):
+        #     node_array = jnp.array(node_list)
+        #     node_idx = find_index_vmap(node_array)
 
-            dofs = jnp.array(l_dof[i])
+        #     dofs = jnp.array(l_dof[i])
 
-            # broadcast: (n_nodes, n_dofs)
-            dof_idx = 6 * node_idx[:, None] + dofs[None, :]
-            constrained_dofs.append(dof_idx.reshape(-1))
+        #     # broadcast: (n_nodes, n_dofs)
+        #     dof_idx = 6 * node_idx[:, None] + dofs[None, :]
+        #     constrained_dofs.append(dof_idx.reshape(-1))
 
-        constrained_dofs = jnp.concatenate(constrained_dofs)
+        constrained_dofs = self.constrained_dofs
 
         # ---- Step 3: apply masking to sparse structure ----
 
-        rows = self.K.indices[:, 0]
-        cols = self.K.indices[:, 1]
+        rows = K.indices[:, 0]
+        cols = K.indices[:, 1]
 
         # membership test (vectorized)
         def isin(x, values):
@@ -477,7 +513,7 @@ class FEM_study():
         col_mask = isin(cols, constrained_dofs)
 
         # zero rows and columns
-        new_data = jnp.where(row_mask | col_mask, 0.0, self.K.data)
+        new_data = jnp.where(row_mask | col_mask, 0.0, K.data)
 
         # ---- Step 4: set diagonal entries to 1 ----
         diag_mask = row_mask & col_mask & (rows == cols)
@@ -487,16 +523,15 @@ class FEM_study():
         new_data = jnp.where(diag_mask, 1.0, new_data)
 
         # ---- Step 5: rhs ----
-        rhs = self.rhs.at[constrained_dofs].set(0.0)
+        rhs = rhs.at[constrained_dofs].set(0.0)
 
         # ---- rebuild sparse matrix ----
-        K_new = sparse.BCOO((new_data, self.K.indices), shape=self.K.shape)
+        K_new = sparse.BCOO((new_data, K.indices), shape=K.shape)
 
-        self.K = K_new
-        self.rhs = rhs
         return K_new, rhs
 
-    def set_rhs(self, rhs: np.ndarray) -> None:
+    @partial(jit, static_argnums=(0,))
+    def set_rhs(self, rhs: np.ndarray) -> jnp.ndarray:
         """
         Set the right-hand side
         
@@ -506,9 +541,12 @@ class FEM_study():
         if rhs.shape[0] != 6 * len(self.nodes):
             raise ValueError(f'Incorrect RHS dimension! '
                            f'Expected: {6*len(self.nodes)}, received: {rhs.shape[0]}')
-        self.rhs = jnp.array(rhs)
+        rhs = jnp.array(rhs)
+
+        return rhs
     
-    def solve(self) -> jnp.ndarray:
+    @partial(jit, static_argnums=(0,))
+    def solve(self, K, rhs) -> jnp.ndarray:
         """
         Solve the system KU = F
         
@@ -516,10 +554,11 @@ class FEM_study():
         U: displacement vector (JAX array)
         """
         # Solving with JAX
-        U = jlinalg.solve(self.K, self.rhs)
+        U = jlinalg.solve(K, rhs)
         return U
     
-    def solve_sparse(self) -> jnp.ndarray:
+    @partial(jit, static_argnums=(0,))
+    def solve_sparse(self, K, rhs) -> jnp.ndarray:
         """
         Solve the system KU = F using sparse solver
         
@@ -527,8 +566,8 @@ class FEM_study():
         U: displacement vector (JAX array)
         """
         def mv(x):
-            return self.K @ x
-        U, info = cg(mv, self.rhs,tol=1e-6)
+            return K @ x
+        U, info = cg(mv, rhs, tol=1e-6)
         return U
     
     def compute_strain_and_stress(self,nodes_index, U: jnp.ndarray,nodes_coord,element_properties: list, materials: list) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
