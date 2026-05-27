@@ -178,7 +178,7 @@ U_max = h(X)
 print(f"Surface = {surface:.6e} m^2")
 print(f"Maximum deflection at the top edge = {U_max:.6e} m")
 grad_f = jax.grad(obj_fun)
-grad_h = jax.grad(h_sparse)
+grad_h = jax.grad(h)
 
 # Compiler les fonctions avec JIT
 f_jit = jax.jit(obj_fun)
@@ -226,16 +226,16 @@ def callback(intermediate_result: OptimizeResult):
 
 # Optimisation avec SLSQP
 
-result = minimize(
-    fun=f_numpy,
-    x0=x0,
-    method='SLSQP',
-    jac=grad_f_numpy,
-    constraints=constraint,
-    bounds = [(0.0,0.9)]*4, # bounds on the twist distribution
-    options={'disp': True,'maxiter': 15},
-    callback=callback
-)
+# result = minimize(
+#     fun=f_numpy,
+#     x0=x0,
+#     method='SLSQP',
+#     jac=grad_f_numpy,
+#     constraints=constraint,
+#     bounds = [(0.0,0.9)]*4, # bounds on the twist distribution
+#     options={'disp': True,'maxiter': 15},
+#     callback=callback
+# )
 
 
 # # #Post processing
