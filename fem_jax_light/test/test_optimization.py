@@ -1,17 +1,14 @@
 #optimization of a cantilever beam
 import os
-os.environ["JAX_LOG_COMPILES"] = "1"
-os.environ["JAX_TRACEBACK_FILTERING"] = "off"
-os.environ["JAX_PLATFORM_NAME"] = "cpu"
+# os.environ["JAX_LOG_COMPILES"] = "1"
+# os.environ["JAX_TRACEBACK_FILTERING"] = "off"
+# os.environ["JAX_PLATFORM_NAME"] = "cpu"
 import numpy as np 
 from fem_jax_light.FEM_jax import FEM_study
 import jax.numpy as jnp
 import jax
 jax.config.update("jax_enable_x64", True)
-
 from scipy.optimize import minimize, OptimizeResult
-
-
 
 # optimal shape of a cantilever beam 
 test_case = "cantilever_beam"
@@ -74,24 +71,26 @@ def obj_fun(X):
     #compute the surface
     #from FEM we access the connectivity of the mesh for all elements
     nodes_element_index = fem.elements_tot[:,3:6].astype(int)-1
-    coord_nodes_tri = new_nodes[nodes_element_index]
-    n_elem = fem.elements_tot.shape[0]
+    coord_nodes_tri = new_nodes[nodes_element_index,1:]
+    surface_tri = fem.compute_all_triangle_areas(coord_nodes_tri)
+    surface = jnp.sum(surface_tri)
+    # n_elem = fem.elements_tot.shape[0]
 
-    M1 = jnp.ones((n_elem, 3, 3))
-    M2 = jnp.ones((n_elem, 3, 3))
-    M3 = jnp.ones((n_elem, 3, 3))
-    M1 = M1.at[:, 0, :].set(coord_nodes_tri[:, :, 0])
-    M1 = M1.at[:, 1, :].set(coord_nodes_tri[:, :, 1])
-    M2 = M2.at[:, 0, :].set(coord_nodes_tri[:, :, 1])
-    M2 = M2.at[:, 1, :].set(coord_nodes_tri[:, :, 2])
-    M3 = M3.at[:, 0, :].set(coord_nodes_tri[:, :, 2])
-    M3 = M3.at[:, 1, :].set(coord_nodes_tri[:, :, 0])
-    surfaces_tri = 0.5 * jnp.sqrt(jnp.linalg.det(M1)**2 + jnp.linalg.det(M2)**2 + jnp.linalg.det(M3)**2)
-    #Regularisation to avoid 0/sqrt(0) in the derivative
-    M1 = M1 + 1e-12
-    M2 = M2 + 1e-12
-    M3 = M3 + 1e-12
-    surface = jnp.sum(surfaces_tri)
+    # M1 = jnp.ones((n_elem, 3, 3))
+    # M2 = jnp.ones((n_elem, 3, 3))
+    # M3 = jnp.ones((n_elem, 3, 3))
+    # M1 = M1.at[:, 0, :].set(coord_nodes_tri[:, :, 0])
+    # M1 = M1.at[:, 1, :].set(coord_nodes_tri[:, :, 1])
+    # M2 = M2.at[:, 0, :].set(coord_nodes_tri[:, :, 1])
+    # M2 = M2.at[:, 1, :].set(coord_nodes_tri[:, :, 2])
+    # M3 = M3.at[:, 0, :].set(coord_nodes_tri[:, :, 2])
+    # M3 = M3.at[:, 1, :].set(coord_nodes_tri[:, :, 0])
+    # surfaces_tri = 0.5 * jnp.sqrt(jnp.linalg.det(M1)**2 + jnp.linalg.det(M2)**2 + jnp.linalg.det(M3)**2)
+    # #Regularisation to avoid 0/sqrt(0) in the derivative
+    # M1 = M1 + 1e-12
+    # M2 = M2 + 1e-12
+    # M3 = M3 + 1e-12
+    # surface = jnp.sum(surfaces_tri)
     return surface
 
 def h(X):
@@ -194,7 +193,7 @@ def f_numpy(x):
 
 def grad_f_numpy(x):
     # Ensure input to JAX is float64 and output numpy array is float64
-    return np.array(grad_f_jit(jnp.array(x, dtype=jnp.float64)), dtype=np.float64)
+    return np.asarray(grad_f_jit(jnp.array(x, dtype=jnp.float64)), dtype=np.float64)
 
 def h_numpy(x):
     # Ensure input to JAX is float64 and output is float64
@@ -202,7 +201,7 @@ def h_numpy(x):
 
 def grad_h_numpy(x):
     # Ensure input to JAX is float64 and output numpy array is float64
-    return np.array(grad_h_jit(jnp.array(x, dtype=jnp.float64)), dtype=np.float64)
+    return np.asarray(grad_h_jit(jnp.array(x, dtype=jnp.float64)), dtype=np.float64)
 
 # Point initial
 x0 = np.array(X, dtype=np.float64) # Explicitly set x0 to float64
@@ -226,38 +225,38 @@ def callback(intermediate_result: OptimizeResult):
 
 # Optimisation avec SLSQP
 
-# result = minimize(
-#     fun=f_numpy,
-#     x0=x0,
-#     method='SLSQP',
-#     jac=grad_f_numpy,
-#     constraints=constraint,
-#     bounds = [(0.0,0.9)]*4, # bounds on the twist distribution
-#     options={'disp': True,'maxiter': 15},
-#     callback=callback
-# )
+result = minimize(
+    fun=f_numpy,
+    x0=x0,
+    method='SLSQP',
+    jac=grad_f_numpy,
+    constraints=constraint,
+    bounds = [(0.0,0.9)]*4, # bounds on the tck distribution
+    options={'disp': True,'maxiter': 15},
+    callback=callback
+)
 
 
 # # #Post processing
-# import matplotlib.pyplot as plt
-# for j, (xk, fk) in enumerate(history):
+import matplotlib.pyplot as plt
+for j, (xk, fk) in enumerate(history):
 
-#     X = jnp.array(xk)
-#     y_sections_norm = jnp.array(y_sections/y_sections.max())
-#     ind_y = jnp.argsort(y_sections_norm)
-#     y_sections_norm = y_sections_norm[ind_y]
-#     DT = X[0]*y_sections_norm*(1.0-y_sections_norm)**3 + X[1]*y_sections_norm**2*(1.0-y_sections_norm)**2 + X[2]*y_sections_norm**3*(1.0-y_sections_norm)+X[3]*y_sections_norm**4
-#     # mesh deformation
-#     new_nodes = jnp.array(nodes).copy()
-#     nx = int(nodes.shape[0]/y_sections.shape[0])
-#     ind_y = jnp.argsort(new_nodes[:,2])
-#     new_nodes_sorted = new_nodes[ind_y]
-#     for i in range(y_sections.shape[0]):
-#         dx = new_nodes_sorted[i*nx:(i+1)*nx,1]
-#         DY_section = dx+(-DT[i]*dx+DT[i]) 
-#         new_nodes_sorted = new_nodes_sorted.at[i*nx:(i+1)*nx,1].set(DY_section)
+    X = jnp.array(xk)
+    y_sections_norm = jnp.array(y_sections/y_sections.max())
+    ind_y = jnp.argsort(y_sections_norm)
+    y_sections_norm = y_sections_norm[ind_y]
+    DT = X[0]*y_sections_norm*(1.0-y_sections_norm)**3 + X[1]*y_sections_norm**2*(1.0-y_sections_norm)**2 + X[2]*y_sections_norm**3*(1.0-y_sections_norm)+X[3]*y_sections_norm**4
+    # mesh deformation
+    new_nodes = jnp.array(nodes).copy()
+    nx = int(nodes.shape[0]/y_sections.shape[0])
+    ind_y = jnp.argsort(new_nodes[:,2])
+    new_nodes_sorted = new_nodes[ind_y]
+    for i in range(y_sections.shape[0]):
+        dx = new_nodes_sorted[i*nx:(i+1)*nx,1]
+        DY_section = dx+(-DT[i]*dx+DT[i]) 
+        new_nodes_sorted = new_nodes_sorted.at[i*nx:(i+1)*nx,1].set(DY_section)
 
-#     plt.plot(new_nodes_sorted[:,2],new_nodes_sorted[:,1],'+')
-# plt.axis('equal')
+    plt.plot(new_nodes_sorted[:,2],new_nodes_sorted[:,1],'+')
+plt.axis('equal')
 
-# plt.show()
+plt.show()
