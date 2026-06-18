@@ -11,6 +11,9 @@ jax.config.update("jax_enable_x64", True)
 from scipy.optimize import minimize, OptimizeResult
 import matplotlib.pyplot as plt
 
+import time as t 
+
+
 test_case = "wing_spar"
 mesh_file = "meshes/"+test_case+".msh"
 # Material and element properties
@@ -44,12 +47,6 @@ l_dof_clamped = [[0,1,2,3,4,5]]
 l_dof = [l_dof_clamped]
 fem.create_constrained_DOFs(nodes_sets, l_dof)
 
-#solve the initial problem 
-K = fem.assembling_K_parametric(nodes[:,1:], element_property, material)
-K, rhs = fem.boundary_conditions(K, rhs)
-Us = fem.solve(K,rhs)
-fem.post_processing(Us,"meshes/wing_spar_U")
-
 #compute the surfaces
 surfaces = jnp.array([fem.element_dict['element_sets'][i+1]['surfaces'].sum() for i in range(30)])
 
@@ -60,6 +57,16 @@ def obj_fun(X):
     mass = (X*surfaces).sum()
     return mass 
 
+def h_sparse(X):
+    # X is the vector that parameterized the shape of the beam thickness using element properties
+    element_property = [[h] for h in X]
+    K = fem.assembling_K_parametric_sparse(nodes[:,1:], element_property, material)
+    rhs = fem.set_rhs(F)
+    K, rhs = fem.boundary_conditions_sparse(K, rhs)
+    Us = fem.solve_sparse(K,rhs)
+    return (2.0-Us[2::6].max())
+
+
 def h(X):
     # X is the vector that parameterized the shape of the beam thickness using element properties
     element_property = [[h] for h in X]
@@ -69,12 +76,8 @@ def h(X):
     Us = fem.solve(K,rhs)
     return (2.0-Us[2::6].max())
 
-
 X = jnp.array([0.04]*30)
 mass = obj_fun(X)
-U_max = h(X)
-print(f"mass = {mass:.6e} m^2")
-print(f"Maximum deflection at the top edge = {U_max:.6e} m")
 grad_f = jax.grad(obj_fun)
 grad_h = jax.grad(h)
 
@@ -82,7 +85,27 @@ grad_h = jax.grad(h)
 f_jit = jax.jit(obj_fun)
 grad_f_jit = jax.jit(grad_f)
 h_jit = jax.jit(h)
-grad_h_jit = jax.jit(grad_h)
+grad_h_jit = jax.jit(grad_h) 
+
+#computation time before jit
+t6 = t.time()
+U_max = h_jit(X)
+t7 = t.time()
+print(f"Time to compute the maximum deflection before JIT: {t7-t6:.6f} seconds")
+t8 = t.time()
+d_U_max = grad_h_jit(X)
+t9 = t.time()
+print(f"Time to compute the gradient of the maximum deflection before JIT: {t9-t8:.6f} seconds")
+#computation time after jit
+t6 = t.time()
+U_max = h_jit(X).block_until_ready()
+t7 = t.time()
+print(f"Time to compute the maximum deflection after JIT: {t7-t6:.6f} seconds")
+t8 = t.time()
+d_U_max = grad_h_jit(X).block_until_ready()
+t9 = t.time()
+print(f"Time to compute the gradient of the maximum deflection after JIT: {t9-t8:.6f} seconds")
+
 
 #conversion to scipy to use scipy optimize SLSQP 
 def f_numpy(x):
