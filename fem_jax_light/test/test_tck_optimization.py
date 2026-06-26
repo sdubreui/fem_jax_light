@@ -14,15 +14,23 @@ import matplotlib.pyplot as plt
 import time as t 
 
 
-test_case = "wing_spar"
+#test_case = "wing_spar"
+#test_case  = "wing_spar_ribs"
+test_case  = "wing_full"
 mesh_file = "meshes/"+test_case+".msh"
 # Material and element properties
 E = 6825.0*1e7
 nu = 0.3
 h = 0.04
 element_type = {'tri': 'DKT_jax'}
-element_property = [[h]]*30
-material = [[E,nu]]*30 
+if test_case == "wing_spar":
+    n_var = 30
+elif test_case == "wing_spar_ribs":
+    n_var = 60
+elif test_case == "wing_full":
+    n_var = 90    
+element_property = [[h]]*n_var
+material = [[E,nu]]*n_var 
 # Create FEM study
 fem = FEM_study(mesh_file,element_type,element_property,material)
 #RHS 
@@ -48,7 +56,7 @@ l_dof = [l_dof_clamped]
 fem.create_constrained_DOFs(nodes_sets, l_dof)
 
 #compute the surfaces
-surfaces = jnp.array([fem.element_dict['element_sets'][i+1]['surfaces'].sum() for i in range(30)])
+surfaces = jnp.array([fem.element_dict['element_sets'][i+1]['surfaces'].sum() for i in range(n_var)])
 
 
 #objective function: mass
@@ -76,7 +84,7 @@ def h(X):
     Us = fem.solve(K,rhs)
     return (2.0-Us[2::6].max())
 
-X = jnp.array([0.04]*30)
+X = jnp.array([0.04]*n_var)
 mass = obj_fun(X)
 grad_f = jax.grad(obj_fun)
 grad_h = jax.grad(h)
@@ -87,24 +95,24 @@ grad_f_jit = jax.jit(grad_f)
 h_jit = jax.jit(h)
 grad_h_jit = jax.jit(grad_h) 
 
-#computation time before jit
-t6 = t.time()
-U_max = h_jit(X)
-t7 = t.time()
-print(f"Time to compute the maximum deflection before JIT: {t7-t6:.6f} seconds")
-t8 = t.time()
-d_U_max = grad_h_jit(X)
-t9 = t.time()
-print(f"Time to compute the gradient of the maximum deflection before JIT: {t9-t8:.6f} seconds")
-#computation time after jit
-t6 = t.time()
-U_max = h_jit(X).block_until_ready()
-t7 = t.time()
-print(f"Time to compute the maximum deflection after JIT: {t7-t6:.6f} seconds")
-t8 = t.time()
-d_U_max = grad_h_jit(X).block_until_ready()
-t9 = t.time()
-print(f"Time to compute the gradient of the maximum deflection after JIT: {t9-t8:.6f} seconds")
+# #computation time before jit
+# t6 = t.time()
+# U_max = h_jit(X)
+# t7 = t.time()
+# print(f"Time to compute the maximum deflection before JIT: {t7-t6:.6f} seconds")
+# t8 = t.time()
+# d_U_max = grad_h_jit(X)
+# t9 = t.time()
+# print(f"Time to compute the gradient of the maximum deflection before JIT: {t9-t8:.6f} seconds")
+# #computation time after jit
+# t6 = t.time()
+# U_max = h_jit(X).block_until_ready()
+# t7 = t.time()
+# print(f"Time to compute the maximum deflection after JIT: {t7-t6:.6f} seconds")
+# t8 = t.time()
+# d_U_max = grad_h_jit(X).block_until_ready()
+# t9 = t.time()
+# print(f"Time to compute the gradient of the maximum deflection after JIT: {t9-t8:.6f} seconds")
 
 
 #conversion to scipy to use scipy optimize SLSQP 
@@ -152,7 +160,7 @@ result = minimize(
     method='SLSQP',
     jac=grad_f_numpy,
     constraints=constraint,
-    bounds = [(1e-3,0.1)]*30, # bounds on the tck distribution
+    bounds = [(1e-3,0.1)]*n_var, # bounds on the tck distribution
     options={'disp': True,'maxiter': 50,'ftol': 1e-4},
     callback=callback
 )
@@ -184,4 +192,4 @@ ax2.set_yscale('log')
 plt.legend(line1 + line2, [l.get_label() for l in line1 + line2], loc='best')
 plt.title('Convergence history')
 
-plt.savefig("wing_spar_optimization_history.pdf")
+plt.savefig(f"{test_case}_optimization_history.pdf")

@@ -390,8 +390,14 @@ for i in range(s-1):
 for i in range(n_ribs):
     spar_i = gmsh.model.addPhysicalGroup(2, spar[i*4:(i+1)*4], 1+i) #start at 1 if only spar, 3 if ribs and skin are also physical groups
     gmsh.model.setPhysicalName(2,spar_i,'spar_'+str(i+1))
+for i in range(n_ribs):
+    ribs_i = gmsh.model.addPhysicalGroup(2, ribs[i*2:(i+1)*2], 1+n_ribs+i)
+    gmsh.model.setPhysicalName(2,ribs_i,'ribs_'+str(i+1))
+for i in range(n_ribs):
+    skin_i = gmsh.model.addPhysicalGroup(2, skin[i*4:(i+1)*4], 1+2*n_ribs+i)
+    gmsh.model.setPhysicalName(2,skin_i,'skin_'+str(i+1))    
 # We can then generate a 2D mesh...
 gmsh.model.mesh.generate(2)
 # ... and save it to disk
-gmsh.write("meshes/wing_spar.msh")
+gmsh.write("meshes/wing_full.msh")
 gmsh.model.remove()
