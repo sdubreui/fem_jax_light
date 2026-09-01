@@ -312,22 +312,34 @@ class FEM_study():
         
         #initialization of K
         K = jnp.zeros((self.nodes_index.shape[0]*6, self.nodes_index.shape[0]*6))
-                                                                                                                 
+
+        #initialization of material and element properties
+        materials_set_tot = jnp.zeros((self.elements_sets.shape[0],len(materials[0]))) 
+        property_set_tot = jnp.zeros((self.elements_sets.shape[0],len(element_properties[0])))                                                                                                        
         for i in self.element_dict['element_sets'].keys():
             name = self.element_dict['element_sets'][i]['name']
             # mask creation
             mask = (self.elements_tot[:, 2] == i)
-            compute_K_ref = self.DKT.compute_K_elem
-            def compute_K_single_masked(coords, m, materials, properties):
-                K = compute_K_ref(coords,materials,properties)
-                return jnp.where(m, K, 0.0)
-            materials_set = jnp.atleast_2d(materials[i-1]).repeat(mask.shape[0],axis=0)
-            property_set = jnp.atleast_2d(element_properties[i-1]).repeat(mask.shape[0],axis=0)
-            K_elem = vmap(compute_K_single_masked)(all_coords,mask,materials_set,property_set)
+            # fill material and property sets
+            materials_set_tot = materials_set_tot.at[mask].set(jnp.atleast_2d(materials[i-1]).repeat(mask.sum(),axis=0))
+            property_set_tot = property_set_tot.at[mask].set(jnp.atleast_2d(element_properties[i-1]).repeat(mask.sum(),axis=0))
+            
+        compute_K_ref = self.DKT.compute_K_elem
+        def compute_K_single(coords, materials, properties):
+            K = compute_K_ref(coords,materials,properties)
+            return K
+
+        K_elem = vmap(compute_K_single)(all_coords,materials_set_tot,property_set_tot)
+        # def compute_K_single_masked(coords, m, materials, properties):
+        #     K = compute_K_ref(coords,materials,properties)
+        #     return jnp.where(m, K, 0.0)
+        # materials_set = jnp.atleast_2d(materials[i-1]).repeat(mask.shape[0],axis=0)
+        # property_set = jnp.atleast_2d(element_properties[i-1]).repeat(mask.shape[0],axis=0)
+            
 
            
             # Ultra-fast assembly
-            K = self.assembler.assemble(K_elem) + K
+        K = self.assembler.assemble(K_elem)
         self.K = K
                                                                      
         return K
@@ -358,22 +370,24 @@ class FEM_study():
         #initialization of K
         K = jnp.zeros(self.assembler.flat_indices.shape[0])
                                                                 
-        
+        #initialization of material and element properties
+        materials_set_tot = jnp.zeros((self.elements_sets.shape[0],len(materials[0]))) 
+        property_set_tot = jnp.zeros((self.elements_sets.shape[0],len(element_properties[0])))                                                                                                        
         for i in self.element_dict['element_sets'].keys():
             name = self.element_dict['element_sets'][i]['name']
             # mask creation
             mask = (self.elements_tot[:, 2] == i)
-            compute_K_ref = self.DKT.compute_K_elem
-            def compute_K_single_masked(coords, m, materials, properties):
-                K = compute_K_ref(coords,materials,properties)
-                return jnp.where(m, K, 0.0)
-            materials_set = jnp.atleast_2d(materials[i-1]).repeat(mask.shape[0],axis=0)
-            property_set = jnp.atleast_2d(element_properties[i-1]).repeat(mask.shape[0],axis=0)
-            K_elem = vmap(compute_K_single_masked)(all_coords,mask,materials_set,property_set)
+            # fill material and property sets
+            materials_set_tot = materials_set_tot.at[mask].set(jnp.atleast_2d(materials[i-1]).repeat(mask.sum(),axis=0))
+            property_set_tot = property_set_tot.at[mask].set(jnp.atleast_2d(element_properties[i-1]).repeat(mask.sum(),axis=0))
 
-           
-            # Ultra-fast assembly
-            K = self.assembler.assemble_coo(K_elem)[1] + K
+        compute_K_ref = self.DKT.compute_K_elem
+        def compute_K_single(coords, materials, properties):
+            K = compute_K_ref(coords,materials,properties)
+            return K
+        K_elem = vmap(compute_K_single)(all_coords,materials_set_tot,property_set_tot)
+        K = self.assembler.assemble_coo(K_elem)[1]   
+         
         K = sparse.BCOO((K,self.assembler.flat_indices),shape=(self.nodes_index.shape[0]*6, self.nodes_index.shape[0]*6))
 
         return K
@@ -558,6 +572,31 @@ class FEM_study():
         return U
     
     @partial(jit, static_argnums=(0,))
+    def _get_bcoo_diagonal(self, A_bcoo):
+        """
+        Extrait la diagonale d'une matrice BCOO JAX.
+        Version corrigée et optimisée pour être 100% compatible avec @jax.jit
+        """
+        # 1. Créer un masque booléen de taille constante (nnz)
+        is_diag = A_bcoo.indices[:, 0] == A_bcoo.indices[:, 1]
+        
+        # 2. MASQUAGE : Au lieu de filtrer (ce qui casse le JIT), on met 
+        # à zéro les données qui ne sont pas sur la diagonale. 
+        # La taille de masked_data reste strictement égale à nnz.
+        masked_data = jnp.where(is_diag, A_bcoo.data, 0.0)
+        
+        # 3. On extrait les indices de ligne pour TOUS les éléments
+        row_indices = A_bcoo.indices[:, 0]
+        
+        # 4. On ajoute tout. 
+        # Les vrais termes diagonaux vont ajouter leur valeur.
+        # Les termes hors-diagonale vont simplement ajouter 0.0 à leur ligne !
+        N = A_bcoo.shape[0]
+        diag_dense = jnp.zeros(N).at[row_indices].add(masked_data)
+        
+        return diag_dense
+
+    @partial(jit, static_argnums=(0,))
     def solve_sparse(self, K, rhs) -> jnp.ndarray:
         """
         Solve the system KU = F using sparse solver
@@ -567,7 +606,11 @@ class FEM_study():
         """
         def mv(x):
             return K @ x
-        U, info = cg(mv, rhs, tol=1e-6)
+        
+        #add a diagonal preconditioner
+        diag_K = self._get_bcoo_diagonal(K)
+        P_inv = lambda r: r / (diag_K + 1e-15)
+        U, info = cg(mv, rhs, tol=1e-3,M=P_inv)
         return U
     
     def compute_strain_and_stress(self,nodes_index, U: jnp.ndarray,nodes_coord,element_properties: list, materials: list) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:

@@ -87,32 +87,32 @@ def h(X):
 X = jnp.array([0.04]*n_var)
 mass = obj_fun(X)
 grad_f = jax.grad(obj_fun)
-grad_h = jax.grad(h)
+grad_h = jax.grad(h_sparse)
 
 # Compiler les fonctions avec JIT
 f_jit = jax.jit(obj_fun)
 grad_f_jit = jax.jit(grad_f)
-h_jit = jax.jit(h)
+h_jit = jax.jit(h_sparse)
 grad_h_jit = jax.jit(grad_h) 
 
-# #computation time before jit
-# t6 = t.time()
-# U_max = h_jit(X)
-# t7 = t.time()
-# print(f"Time to compute the maximum deflection before JIT: {t7-t6:.6f} seconds")
-# t8 = t.time()
-# d_U_max = grad_h_jit(X)
-# t9 = t.time()
-# print(f"Time to compute the gradient of the maximum deflection before JIT: {t9-t8:.6f} seconds")
-# #computation time after jit
-# t6 = t.time()
-# U_max = h_jit(X).block_until_ready()
-# t7 = t.time()
-# print(f"Time to compute the maximum deflection after JIT: {t7-t6:.6f} seconds")
-# t8 = t.time()
-# d_U_max = grad_h_jit(X).block_until_ready()
-# t9 = t.time()
-# print(f"Time to compute the gradient of the maximum deflection after JIT: {t9-t8:.6f} seconds")
+#computation time before jit
+t6 = t.time()
+U_max = h_jit(X)
+t7 = t.time()
+print(f"Time to compute the maximum deflection before JIT: {t7-t6:.6f} seconds")
+t8 = t.time()
+d_U_max = grad_h_jit(X)
+t9 = t.time()
+print(f"Time to compute the gradient of the maximum deflection before JIT: {t9-t8:.6f} seconds")
+#computation time after jit
+t6 = t.time()
+U_max = h_jit(X).block_until_ready()
+t7 = t.time()
+print(f"Time to compute the maximum deflection after JIT: {t7-t6:.6f} seconds")
+t8 = t.time()
+d_U_max = grad_h_jit(X).block_until_ready()
+t9 = t.time()
+print(f"Time to compute the gradient of the maximum deflection after JIT: {t9-t8:.6f} seconds")
 
 
 #conversion to scipy to use scipy optimize SLSQP 
