@@ -87,12 +87,12 @@ def h(X):
 X = jnp.array([0.04]*n_var)
 mass = obj_fun(X)
 grad_f = jax.grad(obj_fun)
-grad_h = jax.grad(h_sparse)
+grad_h = jax.grad(h)
 
 # Compiler les fonctions avec JIT
 f_jit = jax.jit(obj_fun)
 grad_f_jit = jax.jit(grad_f)
-h_jit = jax.jit(h_sparse)
+h_jit = jax.jit(h)
 grad_h_jit = jax.jit(grad_h) 
 
 #computation time before jit
