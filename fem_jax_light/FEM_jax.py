@@ -2,7 +2,7 @@ import numpy as np
 from functools import partial
 import jax.numpy as jnp
 import jax
-from jax import jit, vmap, grad, jacfwd, jacrev, custom_vjp
+from jax import jit, vmap, grad, jacfwd, jacrev, custom_jvp
 import jax.scipy.linalg as jlinalg
 import jax.scipy.sparse.linalg as jspalinalg
 from jax.scipy.sparse.linalg import cg
@@ -905,7 +905,7 @@ class FastAssembler:
 
 
 #linear solver with custom vector-jacobian product (VJP) for memory efficiency
-@custom_vjp
+@custom_jvp
 def solve_system(K, rhs) -> jnp.ndarray:
     """
     Solve the system KU = F
@@ -916,22 +916,20 @@ def solve_system(K, rhs) -> jnp.ndarray:
     # Solving with JAX
     U = jlinalg.solve(K, rhs)
     return U
-# forward pass
-def solve_system_fwd(K, rhs):
+
+@solve_system.defjvp
+def solve_system_jvp(primals, tangents):
+    K, rhs = primals
+    K_dot, rhs_dot = tangents
+    
+    # Résolution de l'état primal (le déplacement U)
     U = jlinalg.solve(K, rhs)
-    return U, (K, U)
-
-# Adjoint pass (backward)
-def solve_system_bwd(res, g):
-    K, U = res
-
-    lambd = jlinalg.solve(K, g)
     
-    d_rhs = lambd
+    # Résolution de la dérivée tangentielle : K * U_dot = rhs_dot - K_dot * U
+    residual = rhs_dot - jnp.dot(K_dot, U)
+    U_dot = jlinalg.solve(K, residual)
     
-    d_K = -jnp.outer(lambd, U)
-    
-    return d_K, d_rhs
+    return U, U_dot
 
-solve_system.defvjp(solve_system_fwd, solve_system_bwd)
+
    
