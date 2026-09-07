@@ -2,7 +2,7 @@ import numpy as np
 from functools import partial
 import jax.numpy as jnp
 import jax
-from jax import jit, vmap, grad, jacfwd, jacrev
+from jax import jit, vmap, grad, jacfwd, jacrev, custom_vjp
 import jax.scipy.linalg as jlinalg
 import jax.scipy.sparse.linalg as jspalinalg
 from jax.scipy.sparse.linalg import cg
@@ -52,6 +52,7 @@ class FEM_study():
         element_dict, elements_tot = self.read_mesh_file()
         
         elements_sets = self.elements_tot[:, [0,3,4,5]]
+        
         self.element_types = jnp.array(elements_tot[:, 2], dtype=jnp.int32)
         nodes_index = np.array(self.nodes[:,0], dtype=int)
         self.assembler = FastAssembler(
@@ -61,7 +62,8 @@ class FEM_study():
             )
         self.nodes_index = jnp.array(self.nodes[:,0],dtype=jnp.int32)
         self.elements_sets = jnp.array(elements_tot[:, [0,3,4,5]], dtype=jnp.int32)
-
+        self.element_type_ids = (self.elements_tot[:, 2] - 1).astype(np.int32)
+        self.elem_nodes = (self.elements_tot[:, 3:6] - 1).astype(np.int32)
 
         # Creation of DKT element
         self.DKT = DKT_element()
@@ -231,7 +233,7 @@ class FEM_study():
                     if node_id not in elem_nodes:
                         elem_nodes.append(node_id)
         
-        self.elem_nodes = elem_nodes
+        
         element_dict["element_sets"] = element_sets
         
         # Detection of unused nodes
@@ -559,17 +561,7 @@ class FEM_study():
 
         return rhs
     
-    @partial(jit, static_argnums=(0,))
-    def solve(self, K, rhs) -> jnp.ndarray:
-        """
-        Solve the system KU = F
-        
-        Returns:
-        U: displacement vector (JAX array)
-        """
-        # Solving with JAX
-        U = jlinalg.solve(K, rhs)
-        return U
+    
     
     @partial(jit, static_argnums=(0,))
     def _get_bcoo_diagonal(self, A_bcoo):
@@ -596,6 +588,13 @@ class FEM_study():
         
         return diag_dense
 
+
+    def solve(self, K, rhs) -> jnp.ndarray:
+        """
+        Solve the system KU = F using the custom VJP function safely.
+        """
+        return solve_system(K, rhs) 
+
     @partial(jit, static_argnums=(0,))
     def solve_sparse(self, K, rhs) -> jnp.ndarray:
         """
@@ -613,7 +612,7 @@ class FEM_study():
         U, info = cg(mv, rhs, tol=1e-3,M=P_inv)
         return U
     
-    def compute_strain_and_stress(self,nodes_index, U: jnp.ndarray,nodes_coord,element_properties: list, materials: list) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    def compute_strain_and_stress_old(self,nodes_index, U: jnp.ndarray,nodes_coord,element_properties: list, materials: list) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """
         Calculate strains and stresses at Gauss points for all elements (optimized version)
         
@@ -665,6 +664,27 @@ class FEM_study():
         
         return results[0], results[1], results[2]    
 
+    def compute_strain_and_stress(self, nodes_index, U: jnp.ndarray, nodes_coord, element_properties, materials) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        """
+        Calculate strains and stresses at Gauss points for all elements (100% JAX Pure & Vectorized).
+        """
+        # 1. Extraction des coordonnées et déplacements (Indexation JAX pure)
+        all_coords = self.prepare_all_tri_element_coords(nodes_index, nodes_coord, self.elements_sets)
+        
+        # Advanced indexing JAX : shape (n_elem, 3, 6) -> reshape (n_elem, 18)
+        U_elem_flat = U[self.elem_nodes].reshape(self.elem_nodes.shape[0], -1)
+        
+        # 2. Conversion et Indexation 100% JAX (Zero NumPy ici pour préserver l'autodiff)
+        properties_all = jnp.asarray(element_properties)[self.element_type_ids]
+        materials_all = jnp.asarray(materials)[self.element_type_ids]
+        
+        # 3. vmap direct sans wrapper Python
+        strains, stresses, points_gauss = vmap(self.DKT.compute_strain_and_stress)(
+            all_coords, U_elem_flat, materials_all, properties_all
+        )
+        
+        return strains, stresses, points_gauss
+
 
     @partial(jit, static_argnums=(0,))
     def compute_vonMises(self, stress):
@@ -673,7 +693,7 @@ class FEM_study():
         sigma_y = stress[1]
         tau_xy = stress[2]
         
-        von_mises = jnp.sqrt(sigma_x**2 - sigma_x*sigma_y + sigma_y**2 + 3*tau_xy**2)
+        von_mises = jnp.sqrt(sigma_x**2 - sigma_x*sigma_y + sigma_y**2 + 3*tau_xy**2+1e-12) #we add epsilon = 1e-12 to avoid a derivative issue when stress is zero
         return von_mises
     
     
@@ -750,7 +770,35 @@ class FEM_study():
             f1.write(str(i+1)+" "+str(U[6*i])+" "+str(U[6*i+1])+" "+str(U[6*i+2])+"\n")
         f1.write("$EndNodeData")    
         return
-
+    
+    def post_processing_VM(self,vm,file_name):
+        """
+        Von Mises stress Post processing file for gmsh
+        """  
+       #copying mesh file
+        with open(self.mesh_file) as f:
+            with open(file_name+".msh", "w") as f1:
+                for line in f:
+                        f1.write(line)
+        f.close()
+        f1.close()
+        f1 = open(file_name+".msh",'a')
+        #vector von mises stress field at elements
+        f1.write("\n")
+        f1.write("$ElementData\n")
+        f1.write('1\n')
+        f1.write('"Von Mises Stress"\n')
+        f1.write('1\n')
+        f1.write('0.0\n')
+        f1.write('3\n')
+        f1.write('0\n')
+        f1.write('1\n')
+        f1.write(str(int(len(self.elements_tot[:,0])))+'\n')
+        for i in range(len(self.elements_tot[:,0])):
+                f1.write(str(int(self.elements_tot[i,0]))+' %f \n' \
+                %(vm[i]))
+        f1.write('$EndElementData\n') 
+        return
 
 class FastAssembler:
     """
@@ -856,6 +904,34 @@ class FastAssembler:
 
 
 
+#linear solver with custom vector-jacobian product (VJP) for memory efficiency
+@custom_vjp
+def solve_system(K, rhs) -> jnp.ndarray:
+    """
+    Solve the system KU = F
+    
+    Returns:
+    U: displacement vector (JAX array)
+    """
+    # Solving with JAX
+    U = jlinalg.solve(K, rhs)
+    return U
+# forward pass
+def solve_system_fwd(K, rhs):
+    U = jlinalg.solve(K, rhs)
+    return U, (K, U)
 
+# Adjoint pass (backward)
+def solve_system_bwd(res, g):
+    K, U = res
 
+    lambd = jlinalg.solve(K, g)
+    
+    d_rhs = lambd
+    
+    d_K = -jnp.outer(lambd, U)
+    
+    return d_K, d_rhs
+
+solve_system.defvjp(solve_system_fwd, solve_system_bwd)
    
