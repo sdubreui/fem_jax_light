@@ -171,102 +171,102 @@ print(f"Time to compute the gradient of the maximum vm stress after JIT: {t10-t9
 # vm_mean = vm.mean(axis=0) #mean over the gauss points
 # fem.post_processing_VM(vm_mean,'vm_before_opt')
 
-#conversion to scipy to use scipy optimize SLSQP 
-def f_numpy(x):
-    # Ensure input to JAX is float64 and output is float64
-    return np.float64(f_jit(jnp.array(x, dtype=jnp.float64)))
+# #conversion to scipy to use scipy optimize SLSQP 
+# def f_numpy(x):
+#     # Ensure input to JAX is float64 and output is float64
+#     return np.float64(f_jit(jnp.array(x, dtype=jnp.float64)))
 
-def grad_f_numpy(x):
-    # Ensure input to JAX is float64 and output numpy array is float64
-    return np.asarray(grad_f_jit(jnp.array(x, dtype=jnp.float64)), dtype=np.float64)
+# def grad_f_numpy(x):
+#     # Ensure input to JAX is float64 and output numpy array is float64
+#     return np.asarray(grad_f_jit(jnp.array(x, dtype=jnp.float64)), dtype=np.float64)
 
-def h_numpy(x):
-    # Ensure input to JAX is float64 and output is float64
-    return np.float64(h_jit(jnp.array(x, dtype=jnp.float64)))
+# def h_numpy(x):
+#     # Ensure input to JAX is float64 and output is float64
+#     return np.float64(h_jit(jnp.array(x, dtype=jnp.float64)))
 
-def h_VM_numpy(x):
-    # Ensure input to JAX is float64 and output is float64
-    return np.float64(h_VM_jit(jnp.array(x, dtype=jnp.float64)))
+# def h_VM_numpy(x):
+#     # Ensure input to JAX is float64 and output is float64
+#     return np.float64(h_VM_jit(jnp.array(x, dtype=jnp.float64)))
 
-def grad_h_numpy(x):
-    # Ensure input to JAX is float64 and output numpy array is float64
-    return np.asarray(grad_h_jit(jnp.array(x, dtype=jnp.float64)), dtype=np.float64)
+# def grad_h_numpy(x):
+#     # Ensure input to JAX is float64 and output numpy array is float64
+#     return np.asarray(grad_h_jit(jnp.array(x, dtype=jnp.float64)), dtype=np.float64)
 
-def grad_h_VM_numpy(x):
-    # Ensure input to JAX is float64 and output numpy array is float64
-    return np.asarray(grad_h_VM_jit(jnp.array(x, dtype=jnp.float64)), dtype=np.float64)
+# def grad_h_VM_numpy(x):
+#     # Ensure input to JAX is float64 and output numpy array is float64
+#     return np.asarray(grad_h_VM_jit(jnp.array(x, dtype=jnp.float64)), dtype=np.float64)
 
-# Point initial
-x0 = np.array(X, dtype=np.float64) # Explicitly set x0 to float64
+# # Point initial
+# x0 = np.array(X, dtype=np.float64) # Explicitly set x0 to float64
 
-# Définir la contrainte au format scipy
-constraint = {
-    'type': 'ineq',
-    'fun': h_VM_numpy,
-    'jac': grad_h_VM_numpy
-}
+# # Définir la contrainte au format scipy
+# constraint = {
+#     'type': 'ineq',
+#     'fun': h_VM_numpy,
+#     'jac': grad_h_VM_numpy
+# }
 
-# callback function to monitor optimization progress
-# Historique
-history = []
-def callback(intermediate_result: OptimizeResult):
-    xk = intermediate_result.x
-    fk = intermediate_result.fun  
+# # callback function to monitor optimization progress
+# # Historique
+# history = []
+# def callback(intermediate_result: OptimizeResult):
+#     xk = intermediate_result.x
+#     fk = intermediate_result.fun  
 
-    print(f"Iteration: x = {xk}, f(x) = {fk}")
-    history.append((xk.copy(), fk))
+#     print(f"Iteration: x = {xk}, f(x) = {fk}")
+#     history.append((xk.copy(), fk))
 
-# Optimisation avec SLSQP
+# # Optimisation avec SLSQP
 
-result = minimize(
-    fun=f_numpy,
-    x0=x0,
-    method='SLSQP',
-    jac=grad_f_numpy,
-    constraints=constraint,
-    bounds = [(1e-3,0.1)]*n_var, # bounds on the tck distribution
-    options={'disp': True,'maxiter': 50,'ftol': 1e-4},
-    callback=callback
-)
+# result = minimize(
+#     fun=f_numpy,
+#     x0=x0,
+#     method='SLSQP',
+#     jac=grad_f_numpy,
+#     constraints=constraint,
+#     bounds = [(1e-3,0.1)]*n_var, # bounds on the tck distribution
+#     options={'disp': True,'maxiter': 50,'ftol': 1e-4},
+#     callback=callback
+# )
 
-hist_f = [h[1] for h in history]
-hist_g = []
-for i in range(len(hist_f)):
-    x = history[i][0]
-    hist_g.append(h_VM_numpy(x))
+# hist_f = [h[1] for h in history]
+# hist_g = []
+# for i in range(len(hist_f)):
+#     x = history[i][0]
+#     hist_g.append(h_VM_numpy(x))
 
-# plot the convergence history
-fig, ax1 = plt.subplots(figsize=(8, 5))
-x = np.arange(len(hist_f))
-# objective function history
-line1 = ax1.plot(x, hist_f, label='f_obj', color='tab:blue')
-ax1.set_xlabel('iterations')
-ax1.set_ylabel('f_obj', color='tab:blue')
-ax1.tick_params(axis='y', labelcolor='tab:blue')
+# # plot the convergence history
+# fig, ax1 = plt.subplots(figsize=(8, 5))
+# x = np.arange(len(hist_f))
+# # objective function history
+# line1 = ax1.plot(x, hist_f, label='f_obj', color='tab:blue')
+# ax1.set_xlabel('iterations')
+# ax1.set_ylabel('f_obj', color='tab:blue')
+# ax1.tick_params(axis='y', labelcolor='tab:blue')
 
-# constraint history
-ax2 = ax1.twinx()
-line2 = ax2.plot(x, -np.array(hist_g), label='g', color='tab:red')
-ax2.set_ylabel('g', color='tab:red')
-ax2.tick_params(axis='y', labelcolor='tab:red')
+# # constraint history
+# ax2 = ax1.twinx()
+# line2 = ax2.plot(x, -np.array(hist_g), label='g', color='tab:red')
+# ax2.set_ylabel('g', color='tab:red')
+# ax2.tick_params(axis='y', labelcolor='tab:red')
 
-# Axe logarithmique sur le second axe Y
-ax2.set_yscale('log')
+# # Axe logarithmique sur le second axe Y
+# ax2.set_yscale('log')
 
-plt.legend(line1 + line2, [l.get_label() for l in line1 + line2], loc='best')
-plt.title('Convergence history')
+# plt.legend(line1 + line2, [l.get_label() for l in line1 + line2], loc='best')
+# plt.title('Convergence history')
 
-plt.savefig(f"{test_case}_optimization_history.pdf")
+# plt.savefig(f"{test_case}_optimization_history.pdf")
 
 
-element_property = [[h] for h in result.x]
-K = fem.assembling_K_parametric_sparse(nodes[:,1:], element_property, material)
-rhs = fem.set_rhs(F)
-K, rhs = fem.boundary_conditions_sparse(K, rhs)
-Us = fem.solve_sparse(K,rhs)
-Us_r = Us.reshape((-1,6))
-strain_and_stress = fem.compute_strain_and_stress(nodes[:,0],Us_r,nodes[:,1:],element_property,material)
-stress = strain_and_stress[1]
-vm = fem.compute_vonMises(stress[:,:,-3:].T) #vm stress at each gauss points
-vm_mean = vm.mean(axis=0) #mean over the gauss points
-fem.post_processing_VM(vm_mean,'vm_after_opt')
+# element_property = [[h] for h in result.x]
+# K = fem.assembling_K_parametric_sparse(nodes[:,1:], element_property, material)
+# rhs = fem.set_rhs(F)
+# K, rhs = fem.boundary_conditions_sparse(K, rhs)
+# Us = fem.solve_sparse(K,rhs)
+# Us_r = Us.reshape((-1,6))
+# strain_and_stress = fem.compute_strain_and_stress(nodes[:,0],Us_r,nodes[:,1:],element_property,material)
+# stress = strain_and_stress[1]
+# vm = fem.compute_vonMises(stress[:,:,-3:].T) #vm stress at each gauss points
+# vm_mean = vm.mean(axis=0) #mean over the gauss points
+# fem.post_processing_VM(vm_mean,'vm_after_opt')

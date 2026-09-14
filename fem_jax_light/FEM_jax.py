@@ -593,7 +593,7 @@ class FEM_study():
         """
         Solve the system KU = F using the custom VJP function safely.
         """
-        return solve_system(K, rhs) 
+        return _solve_system(K, rhs) 
 
     @partial(jit, static_argnums=(0,))
     def solve_sparse(self, K, rhs) -> jnp.ndarray:
@@ -904,32 +904,47 @@ class FastAssembler:
 
 
 
-#linear solver with custom vector-jacobian product (VJP) for memory efficiency
-@custom_jvp
-def solve_system(K, rhs) -> jnp.ndarray:
-    """
-    Solve the system KU = F
+# #linear solver with custom vector-jacobian product (VJP) for memory efficiency
+# @custom_jvp
+# def solve_system(K, rhs) -> jnp.ndarray:
+#     """
+#     Solve the system KU = F
     
-    Returns:
-    U: displacement vector (JAX array)
-    """
-    # Solving with JAX
+#     Returns:
+#     U: displacement vector (JAX array)
+#     """
+#     # Solving with JAX
+#     U = jlinalg.solve(K, rhs)
+#     return U
+
+# @solve_system.defjvp
+# def solve_system_jvp(primals, tangents):
+#     K, rhs = primals
+#     K_dot, rhs_dot = tangents
+    
+#     # Résolution de l'état primal (le déplacement U)
+#     U = jlinalg.solve(K, rhs)
+    
+#     # Résolution de la dérivée tangentielle : K * U_dot = rhs_dot - K_dot * U
+#     residual = rhs_dot - jnp.dot(K_dot, U)
+#     U_dot = jlinalg.solve(K, residual)
+    
+#     return U, U_dot
+
+
+from jax import custom_vjp
+
+@custom_vjp
+def _solve_system(K, rhs):
+    return jlinalg.solve(K, rhs)
+
+def _solve_system_fwd(K, rhs):
     U = jlinalg.solve(K, rhs)
-    return U
+    return U, (K, U)
 
-@solve_system.defjvp
-def solve_system_jvp(primals, tangents):
-    K, rhs = primals
-    K_dot, rhs_dot = tangents
-    
-    # Résolution de l'état primal (le déplacement U)
-    U = jlinalg.solve(K, rhs)
-    
-    # Résolution de la dérivée tangentielle : K * U_dot = rhs_dot - K_dot * U
-    residual = rhs_dot - jnp.dot(K_dot, U)
-    U_dot = jlinalg.solve(K, residual)
-    
-    return U, U_dot
+def _solve_system_bwd(res, g):
+    K, U = res
+    lambd = jlinalg.solve(K, g)
+    return -jnp.outer(lambd, U), lambd
 
-
-   
+_solve_system.defvjp(_solve_system_fwd, _solve_system_bwd)   
